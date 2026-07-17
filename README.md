@@ -1,11 +1,17 @@
-<div align="center">
+# ZÉNITH MASTER — CORE INFRASTRUCTURE
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Este repositorio contiene la infraestructura base de **Zénith**, el ecosistema descentralizado de transporte inteligente de última generación.
 
-  <h1>Built with AI Studio</h2>
+## Arquitectura de Carpetas
+- `/src/firebase`: Configuración inicial del SDK de Firebase.
+- `/src/services`: Módulos desacoplados de alta confiabilidad (Logging, Observabilidad, Verificación).
+- `/src/types.ts`: Modelos de datos del ecosistema en TypeScript estricto.
+- `/src/providers`: Proveedores globales de estado.
+- `firestore.rules`: Reglas de seguridad basadas en ABAC.
+- `firestore.indexes.json`: Índices optimizados para consultas complejas.
 
-  <p>The fastest path from prompt to production with Gemini.</p>
-
-  <a href="https://aistudio.google.com/apps">Start building</a>
-
-</div>
+## Configuración y Despliegue
+1. Instale las dependencias con `npm install`.
+2. Configure el archivo `.env` basándose en `.env.example`.
+3. Inicie el servidor de desarrollo local mediante `npm run dev`.
+4. El compilador y el linter se pueden ejecutar con `npm run build` y `npm run lint`.

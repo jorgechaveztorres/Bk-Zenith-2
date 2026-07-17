@@ -1,0 +1,145 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Zero Trust: everything closed by default)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true ||
+        request.auth.token.email == 'bkheelsec@gmail.com'
+      );
+    }
+
+    // User Profiles
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin(); // El administrador requiere listar conductores para validación
+      allow create: if isOwner(userId)
+        && request.resource.data.role in ['passenger', 'driver']
+        && request.resource.data.uid == userId;
+      allow update: if (isOwner(userId) && request.resource.data.uid == userId)
+        || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Wallets (Billetera)
+    match /wallets/{userId} {
+      allow get: if isOwner(userId);
+      allow write: if false; // El dinero es sagrado, solo modificado server-side (Cloud Functions)
+    }
+
+    // Wallet Movements Subcollection
+    match /wallets/{userId}/movements/{movementId} {
+      allow get, list: if isOwner(userId);
+      allow write: if false; // Solo por backend
+    }
+
+    // Rides (Viajes de Zénith con Tarifa Protegida)
+    match /rides/{rideId} {
+      function isRidePassenger(resourceData) {
+        return resourceData.passengerId == request.auth.uid;
+      }
+      function isRideDriver(resourceData) {
+        return resourceData.driverId == request.auth.uid;
+      }
+
+      allow get: if isSignedIn();
+      allow list: if isSignedIn(); // Los conductores necesitan buscar viajes solicitados
+
+      allow create: if isSignedIn() 
+        && request.resource.data.passengerId == request.auth.uid
+        && request.resource.data.status == 'REQUESTED'
+        && request.resource.data.protectedPrice > 0;
+
+      allow update: if isSignedIn() && (
+        // El pasajero puede cancelar el viaje o calificarlo al terminar
+        (isRidePassenger(resource.data) && (
+          (request.resource.data.status == 'CANCELLED' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+          (resource.data.status == 'COMPLETED' && request.resource.data.status == 'COMPLETED' && request.resource.data.diff(resource.data).affectedKeys().hasAny(['rating', 'feedback', 'updatedAt']))
+        )) ||
+        // Un conductor puede tomar el viaje (si está SEARCHING_DRIVER) o actualizar el estado del viaje asignado
+        (resource.data.status == 'SEARCHING_DRIVER' && 
+         request.resource.data.status == 'DRIVER_ASSIGNED' && 
+         request.resource.data.driverId == request.auth.uid &&
+         request.resource.data.diff(resource.data).affectedKeys().hasAll(['status', 'driverId', 'driverName', 'updatedAt'])) ||
+        // El conductor asignado actualiza estados de tránsito y ubicación
+        (isRideDriver(resource.data) && (
+          (request.resource.data.status in ['DRIVER_ARRIVING', 'WAITING_FOR_OTP', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'] && request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'updatedAt'])) ||
+          (request.resource.data.diff(resource.data).affectedKeys().hasAny(['driverLocation', 'updatedAt']))
+        ))
+      );
+    }
+
+    // In-app Notifications Subcollection (Notificaciones)
+    match /users/{userId}/notifications/{notifId} {
+      allow read, list: if isOwner(userId);
+      allow update: if isOwner(userId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow create, delete: if false; // Solo creadas por backend
+    }
+
+    // Payments (Pagos)
+    match /payments/{paymentId} {
+      allow get: if isSignedIn() && (
+        resource.data.passengerId == request.auth.uid ||
+        resource.data.driverId == request.auth.uid
+      );
+      allow write: if false; // Validado y procesado exclusivamente en el servidor
+    }
+
+    // Audit Logs (Auditoría inmutable para auditoría financiera y eventos críticos)
+    match /audit_logs/{logId} {
+      allow create: if isSignedIn(); // Permite registrar logs de seguridad e incidentes de clientes
+      allow read, update, delete: if false; // Inmutable para prevenir alteraciones
+    }
+
+    // History (Historial de Servicios Cerrados)
+    match /history/{historyId} {
+      allow get: if isSignedIn() && (
+        resource.data.passengerId == request.auth.uid ||
+        resource.data.driverId == request.auth.uid
+      );
+      allow list: if isSignedIn(); // El listado debe filtrarse por userId en consultas del cliente
+      allow write: if false; // Solo archivado mediante procesos automáticos del backend
+    }
+
+    // Driver Audits (Trazabilidad inmutable de conductores)
+    match /driver_audits/{auditId} {
+      allow create: if isSignedIn();
+      allow read, list: if isAdmin();
+      allow update, delete: if false; // Totalmente inmutable
+    }
+
+    // Drivers Online (Conductores Conectados)
+    match /drivers_online/{driverId} {
+      allow read, list: if isSignedIn();
+      allow create, update: if isSignedIn() && request.auth.uid == driverId;
+      allow delete: if isSignedIn() && request.auth.uid == driverId;
+    }
+
+    // Assignments (Ofertas de Viaje de 15 Segundos)
+    match /assignments/{assignmentId} {
+      allow read, list, create, update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    // Dispatch Logs (Auditoría de Despacho Inteligente)
+    match /dispatch_logs/{logId} {
+      allow create: if isSignedIn();
+      allow read, list: if isSignedIn();
+      allow update, delete: if false; // Inmutable
+    }
+  }
+}

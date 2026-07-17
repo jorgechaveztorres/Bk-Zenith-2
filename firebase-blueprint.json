@@ -1,0 +1,80 @@
+{
+  "entities": {
+    "User": {
+      "title": "Zenith User",
+      "description": "A participant in the Zenith network (Client or Operator)",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["passenger", "driver"] },
+        "rating": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "fullName", "role"]
+    },
+    "Ride": {
+      "title": "Operation",
+      "description": "An active urban operation / transit request",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "passengerId": { "type": "string" },
+        "driverId": { "type": "string" },
+        "origin": {
+          "type": "object",
+          "properties": {
+            "address": { "type": "string" },
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "destination": {
+          "type": "object",
+          "properties": {
+            "address": { "type": "string" },
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "suggestedPrice": { "type": "number" },
+        "finalPrice": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "negotiating", "accepted", "in_progress", "completed", "cancelled"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["passengerId", "origin", "destination", "suggestedPrice", "status"]
+    },
+    "Offer": {
+      "title": "Tactical Bid",
+      "description": "An operational bid from an Operator",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "rideId": { "type": "string" },
+        "driverId": { "type": "string" },
+        "price": { "type": "number" },
+        "driverName": { "type": "string" },
+        "driverRating": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["rideId", "driverId", "price", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Profiles for Zenith network participants"
+    },
+    "/rides/{rideId}": {
+      "schema": "Ride",
+      "description": "Active urban operations"
+    },
+    "/rides/{rideId}/offers/{offerId}": {
+      "schema": "Offer",
+      "description": "Operator bids for specific operations"
+    }
+  }
+}

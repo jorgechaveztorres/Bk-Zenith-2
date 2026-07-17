@@ -1,0 +1,41 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-neon-green: #39FF14;
+  --color-zinc-950: #050505;
+  
+  --shadow-tactical: 0 0 10px rgba(57, 255, 20, 0.1), 0 0 5px rgba(57, 255, 20, 0.05);
+  --shadow-glow: 0 0 15px rgba(57, 255, 20, 0.3);
+}
+
+@layer base {
+  body {
+    @apply antialiased bg-[#050505] text-white selection:bg-[#39FF14] selection:text-black;
+  }
+}
+
+@layer components {
+  .hud-card {
+    @apply bg-zinc-900/40 backdrop-blur-md border border-white/5 rounded-2xl shadow-tactical;
+  }
+  
+  .hud-border {
+    @apply border border-white/10;
+  }
+  
+  .btn-tactical {
+    @apply bg-[#39FF14] text-black font-bold px-6 py-3 rounded-xl hover:bg-[#32e012] transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  .btn-outline-tactical {
+    @apply border border-[#39FF14]/30 text-[#39FF14] font-bold px-6 py-3 rounded-xl hover:bg-[#39FF14]/10 transition-all active:scale-95;
+  }
+  
+  .mono-data {
+    @apply font-mono tracking-tighter;
+  }
+}
