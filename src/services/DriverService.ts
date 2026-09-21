@@ -122,12 +122,25 @@ export class DriverService {
         updatedAt: serverTimestamp()
       };
 
+      let rolesEnabled: (UserRole | 'CLIENTE' | 'MOTORIZADO')[] = [UserRole.DRIVER];
+      try {
+        const existingDoc = await getDoc(doc(db, 'users', uid));
+        if (existingDoc.exists()) {
+          const prev = existingDoc.data() as User;
+          rolesEnabled = Array.from(new Set([...(prev.rolesEnabled || [prev.role || UserRole.PASSENGER]), UserRole.DRIVER]));
+        }
+      } catch (e) {
+        // Fallback default
+      }
+
       const userDoc: User = {
         uid,
         fullName,
         email,
         phone,
         role: UserRole.DRIVER,
+        rolesEnabled,
+        activeRole: UserRole.DRIVER,
         rating: 5.0,
         onboardingComplete: false,
         wallet: initialWallet,
@@ -136,7 +149,7 @@ export class DriverService {
 
       const path = `users/${uid}`;
       try {
-        await setDoc(doc(db, 'users', uid), userDoc);
+        await setDoc(doc(db, 'users', uid), userDoc, { merge: true });
       } catch (fsErr) {
         handleFirestoreError(fsErr, OperationType.CREATE, path);
       }

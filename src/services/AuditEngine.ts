@@ -24,23 +24,20 @@ export class AuditEngineClass implements IAuditEngine {
    */
   async logEvent(record: AuditRecord): Promise<boolean> {
     try {
-      LoggingService.info('AUDIT_ENGINE', `Registrando auditoría de tipo ${record.eventType} [${record.severity}]`);
-
-      // Enviar a Firestore de manera segura y asíncrona
-      const auditCollection = collection(db, 'audit_logs');
-      await addDoc(auditCollection, {
-        ...record,
-        timestamp: serverTimestamp(),
-        environment: 'production-sandbox'
+      LoggingService.info('AUDIT_ENGINE', `Registrando auditoría de tipo ${record.eventType} [${record.severity}] vía Backend`);
+      
+      const res = await fetch('/api/audit/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer DUMMY_TOKEN_UNTIL_AUTH_IS_WIRED_ON_FRONTEND` },
+        body: JSON.stringify(record)
       });
-
-      // Rastrear escritura en la telemetría de observabilidad
+      
+      if (!res.ok) throw new Error('Fallo al registrar auditoría en backend');
+      
       ObservabilityService.trackFirestoreWrite();
-
       LoggingService.info('AUDIT_ENGINE', 'Evento de auditoría guardado con éxito de forma inmutable');
       return true;
     } catch (error) {
-      // Las fallas en auditoría no deben botar la app, pero sí deben registrarse a nivel crítico en el logger local
       LoggingService.error('AUDIT_ENGINE', `FALLA CRÍTICA al guardar registro de auditoría de ${record.eventType}`, error);
       ObservabilityService.trackRecoverableError();
       return false;

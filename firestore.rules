@@ -30,8 +30,11 @@ service cloud.firestore {
       allow create: if isOwner(userId)
         && request.resource.data.role in ['passenger', 'driver']
         && request.resource.data.uid == userId;
-      allow update: if (isOwner(userId) && request.resource.data.uid == userId)
-        || isAdmin();
+      allow update: if isAdmin() || (
+        isOwner(userId)
+        && request.resource.data.uid == userId
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['wallet', 'role', 'isAdmin'])
+      );
       allow delete: if isAdmin();
     }
 
@@ -90,6 +93,21 @@ service cloud.firestore {
       allow create, delete: if false; // Solo creadas por backend
     }
 
+    // Accounting Ledger (Libro contable inmutable)
+    match /accounting_ledger/{ledgerId} {
+      allow get, list: if isAdmin();
+      allow write: if false; // Solo backend
+    }
+
+    // Transactions
+    match /transactions/{txId} {
+      allow get, list: if isSignedIn() && (
+        resource.data.passengerId == request.auth.uid ||
+        resource.data.driverId == request.auth.uid
+      );
+      allow write: if false; // Solo Server-Side
+    }
+
     // Payments (Pagos)
     match /payments/{paymentId} {
       allow get: if isSignedIn() && (
@@ -101,8 +119,7 @@ service cloud.firestore {
 
     // Audit Logs (Auditoría inmutable para auditoría financiera y eventos críticos)
     match /audit_logs/{logId} {
-      allow create: if isSignedIn(); // Permite registrar logs de seguridad e incidentes de clientes
-      allow read, update, delete: if false; // Inmutable para prevenir alteraciones
+      allow read, write: if false; // Inmutable, creados solo vía Backend (Server Authority)
     }
 
     // History (Historial de Servicios Cerrados)

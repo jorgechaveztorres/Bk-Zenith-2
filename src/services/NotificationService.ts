@@ -17,6 +17,9 @@ export const createNotification = async (
 
 export const NotificationService = {
   send: createNotification,
+  notifyUser: async (userId: string, title: string, message: string, type: 'info' | 'success' | 'alert' | 'promo' = 'info') => {
+    await createNotification(userId, title, message, type);
+  },
 
   /**
    * Notificación cuando el conductor acepta/toma el viaje solicitado por tarifa protegida

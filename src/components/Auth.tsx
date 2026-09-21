@@ -29,6 +29,8 @@ export default function Auth({ onUserChange }: AuthProps) {
           fullName: displayName || 'Anonymous',
           email: email || '',
           role,
+          activeRole: role,
+          rolesEnabled: [role],
           rating: 5.0
         };
         await setDoc(userRef, {
@@ -38,10 +40,18 @@ export default function Auth({ onUserChange }: AuthProps) {
         onUserChange(newUser);
       } else {
         const userData = userSnap.data() as User;
-        if (userData.role !== role) {
-          await setDoc(userRef, { role }, { merge: true });
-          userData.role = role;
-        }
+        const currentRoles = userData.rolesEnabled || [userData.role || role];
+        const updatedRoles = Array.from(new Set([...currentRoles, role]));
+
+        await setDoc(userRef, {
+          role,
+          activeRole: role,
+          rolesEnabled: updatedRoles
+        }, { merge: true });
+
+        userData.role = role;
+        userData.activeRole = role;
+        userData.rolesEnabled = updatedRoles;
         onUserChange(userData);
       }
     } catch (error) {

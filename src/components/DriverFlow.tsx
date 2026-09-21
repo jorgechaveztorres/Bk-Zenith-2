@@ -47,6 +47,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { locationService, GPSMode, GPSStatus } from '../services/LocationService';
+import ZenithMotorizadoCockpit from './delivery/ZenithMotorizadoCockpit';
+import ZenithCustodyPanel from './delivery/ZenithCustodyPanel';
 
 interface DriverFlowProps {
   user: User;
@@ -235,6 +237,12 @@ export default function DriverFlow({ user }: DriverFlowProps) {
   if (myAcceptedRide) {
     return (
       <div className="space-y-6" id="driver_active_transit_view">
+        {/* ZÉNITH MVP V1.1 MOTORIZADO TACTICAL COCKPIT */}
+        <ZenithMotorizadoCockpit
+          ride={myAcceptedRide}
+          driverUser={user}
+        />
+
         {/* Critical Signal Loss Warning Banner */}
         <AnimatePresence>
           {gpsStatus.signalLoss && (
@@ -483,6 +491,9 @@ export default function DriverFlow({ user }: DriverFlowProps) {
             onSelectRide={setSelectedRide} 
             myAcceptedRide={myAcceptedRide} 
           />
+
+          {/* ZÉNITH MVP V1.1 CUSTODY MANAGEMENT PANEL */}
+          <ZenithCustodyPanel driverUser={user} />
 
           {/* Historical Operational Logs */}
           <div className="space-y-4 pt-4">

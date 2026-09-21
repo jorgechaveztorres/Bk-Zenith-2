@@ -1,5 +1,3 @@
-import { LoggingService } from './LoggingService';
-
 export interface PriceBreakdown {
   baseFare: number;
   distanceFare: number;
@@ -36,7 +34,7 @@ export class PricingEngineClass implements IPricingEngine {
 
   async calculateProtectedPrice(factors: PricingFactors): Promise<PriceBreakdown> {
     try {
-      LoggingService.info('PRICING_ENGINE', 'Iniciando cálculo de Tarifa Protegida Zénith', factors);
+      console.log('PRICING_ENGINE', 'Iniciando cálculo de Tarifa Protegida Zénith', factors);
 
       const distanceFare = factors.distanceKm * this.PER_KM_RATE;
       const durationFare = factors.estimatedMinutes * this.PER_MINUTE_RATE;
@@ -85,30 +83,30 @@ export class PricingEngineClass implements IPricingEngine {
         pricingSeal
       };
 
-      LoggingService.info('PRICING_ENGINE', `Tarifa Protegida calculada: $${finalPrice}. Sello: ${pricingSeal}`);
+      console.log('PRICING_ENGINE', `Tarifa Protegida calculada: $${finalPrice}. Sello: ${pricingSeal}`);
       return breakdown;
     } catch (error) {
-      LoggingService.error('PRICING_ENGINE', 'Error en PricingEngine al calcular tarifa protegida', error);
+      console.error('PRICING_ENGINE', 'Error en PricingEngine al calcular tarifa protegida', error);
       throw error;
     }
   }
 
   async verifyPricingSeal(price: number, seal: string, rideId: string): Promise<boolean> {
     try {
-      LoggingService.info('PRICING_ENGINE', `Validando integridad de la tarifa protegida ($${price}) para viaje: ${rideId}`);
+      console.log('PRICING_ENGINE', `Validando integridad de la tarifa protegida ($${price}) para viaje: ${rideId}`);
       
       // En producción, esto compara el hash guardado/sello con una recreación usando la clave privada del servidor
       const calculatedHash = this.simpleHash(`${price}-${rideId}`);
       const isValid = seal === calculatedHash || seal.startsWith('ZEN_SEAL_');
       
       if (isValid) {
-        LoggingService.info('PRICING_ENGINE', `Tarifa verificada e inalterada para viaje ${rideId}`);
+        console.log('PRICING_ENGINE', `Tarifa verificada e inalterada para viaje ${rideId}`);
       } else {
-        LoggingService.error('PRICING_ENGINE', `¡FRAUDE DETECTADO! El sello ${seal} no coincide para la tarifa $${price} del viaje ${rideId}`);
+        console.error('PRICING_ENGINE', `¡FRAUDE DETECTADO! El sello ${seal} no coincide para la tarifa $${price} del viaje ${rideId}`);
       }
       return isValid;
     } catch (error) {
-      LoggingService.error('PRICING_ENGINE', 'Error al verificar sello de tarifa', error);
+      console.error('PRICING_ENGINE', 'Error al verificar sello de tarifa', error);
       return false;
     }
   }

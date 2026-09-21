@@ -9,7 +9,7 @@ import {
   sendEmailVerification,
   reload
 } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { User, UserRole, UserSettings } from '../types';
 import { 
   Cpu, 
@@ -343,12 +343,27 @@ export default function ClientOnboarding({ onComplete, onExitGuest }: ClientOnbo
         notificationsEnabled: notificationPermission === 'granted'
       };
 
+      let rolesEnabled: (UserRole | 'CLIENTE' | 'MOTORIZADO')[] = [UserRole.PASSENGER];
+      try {
+        const existingDoc = await getDoc(doc(db, 'users', fbUser.uid));
+        if (existingDoc.exists()) {
+          const prev = existingDoc.data() as User;
+          rolesEnabled = Array.from(new Set([...(prev.rolesEnabled || [prev.role || UserRole.PASSENGER]), UserRole.PASSENGER]));
+        }
+      } catch (e) {
+        // Fallback
+      }
+
       const finalUser: User = {
         uid: fbUser.uid,
         fullName: `${firstName} ${lastName}`.trim() || fbUser.displayName || 'Cliente Zénith',
         email: fbUser.email || email,
         phone: phone || '+51 900000000',
         role: UserRole.PASSENGER,
+        rolesEnabled,
+        activeRole: UserRole.PASSENGER,
+        phoneVerified: false, // OTP simulado en desarrollo (pendiente de Firebase Phone Auth en prod)
+        emailVerified: fbUser.emailVerified || false,
         rating: 5.0,
         onboardingComplete: true,
         settings: clientSettings,
@@ -379,7 +394,7 @@ export default function ClientOnboarding({ onComplete, onExitGuest }: ClientOnbo
         ...finalUser,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-      });
+      }, { merge: true });
 
       LoggingService.info('AUTH', `Onboarding del cliente completado exitosamente: ${finalUser.fullName}`);
       setStep('completion');

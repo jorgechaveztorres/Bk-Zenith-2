@@ -27,29 +27,45 @@ export class SunatAdapter implements TaxAdapter {
   };
 
   async emitInvoice(invoice: Invoice): Promise<TaxEmissionResult> {
-    // Simulating OSE processing time and validations
-    await new Promise(resolve => setTimeout(resolve, 800));
-    
-    // RUC check simulation
-    if (!invoice.companyRuc.startsWith('20') && !invoice.companyRuc.startsWith('10')) {
+    try {
+      const res = await fetch('/api/tax/emit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          documentType: 'invoice',
+          customerId: invoice.companyRuc,
+          amount: invoice.total
+        })
+      });
+      const data = await res.json();
+      
+      if (!res.ok || !data.success) {
+         return {
+          success: false,
+          status: TaxStatus.REJECTED,
+          hash: '',
+          sunatErrors: [data.error || 'Error de conexión con SUNAT']
+        };
+      }
+      
+      const docHash = generateMockCriptoHash(invoice.series, invoice.correlative, invoice.total);
+      return {
+        success: true,
+        status: TaxStatus.ACCEPTED,
+        xmlUrl: `https://zenith-billing-bucket.s3.amazonaws.com/sunat/xml/${data.documentId}.xml`,
+        pdfUrl: `https://zenith-billing-bucket.s3.amazonaws.com/sunat/pdf/${data.documentId}.pdf`,
+        cdrUrl: `https://zenith-billing-bucket.s3.amazonaws.com/sunat/cdr/${data.documentId}.xml`,
+        hash: data.cdrHash || docHash,
+        sunatObservations: data.observations || []
+      };
+    } catch (e: any) {
       return {
         success: false,
         status: TaxStatus.REJECTED,
         hash: '',
-        sunatErrors: ['RUC inválido de acuerdo con los padrones de SUNAT (Debe iniciar con 10 o 20).']
+        sunatErrors: [e.message]
       };
     }
-
-    const docHash = generateMockCriptoHash(invoice.series, invoice.correlative, invoice.total);
-    return {
-      success: true,
-      status: TaxStatus.ACCEPTED,
-      xmlUrl: `https://zenith-billing-bucket.s3.amazonaws.com/sunat/xml/${invoice.id}.xml`,
-      pdfUrl: `https://zenith-billing-bucket.s3.amazonaws.com/sunat/pdf/${invoice.id}.pdf`,
-      cdrUrl: `https://zenith-billing-bucket.s3.amazonaws.com/sunat/cdr/${invoice.id}.xml`,
-      hash: docHash,
-      sunatObservations: ['Boleta/Factura emitida fuera de horario bancario habitual, registrada en cola batch.']
-    };
   }
 
   async emitReceipt(receipt: Receipt): Promise<TaxEmissionResult> {

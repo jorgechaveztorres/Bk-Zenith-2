@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User, UserRole, Ride, RideStatus } from './types';
 import Auth from './components/Auth';
 import ClientOnboarding from './components/ClientOnboarding';
@@ -9,9 +9,10 @@ import PromptHelper from './components/PromptHelper';
 import SimulationLab from './lso/components/SimulationLab';
 import DevObservabilityHUD from './components/DevObservabilityHUD';
 import AdminDashboard from './components/admin/AdminDashboard';
+import OperationalHeartTestView from './components/test/OperationalHeartTestView';
 import { LoggingService } from './services/LoggingService';
 import { ObservabilityService } from './services/ObservabilityService';
-import { LogOut, User as UserIcon, Car, Menu, Settings, Bell, Compass, Activity, ShieldAlert, FlaskConical, Shield } from 'lucide-react';
+import { LogOut, User as UserIcon, Car, Menu, Settings, Bell, Compass, Activity, ShieldAlert, FlaskConical, Shield, Zap, Play } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { auth, db } from './firebase/config';
 import { doc, getDoc, setDoc, collection, query, where, onSnapshot, limit, orderBy } from 'firebase/firestore';
@@ -29,7 +30,8 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
-  const [activeModule, setActiveModule] = useState<'service' | 'control_center' | 'lso' | 'admin'>('service');
+  const [activeModule, setActiveModule] = useState<'service' | 'control_center' | 'lso' | 'admin' | 'heart_test'>('service');
+  const [showHeartTestModal, setShowHeartTestModal] = useState(false);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   // Performance render tracker
@@ -41,7 +43,7 @@ export default function App() {
     ObservabilityService.trackRenderTime(Math.max(1, duration));
   });
 
-  const handleModuleChange = (module: 'service' | 'control_center' | 'lso' | 'admin') => {
+  const handleModuleChange = (module: 'service' | 'control_center' | 'lso' | 'admin' | 'heart_test') => {
     ObservabilityService.startNavigation();
     LoggingService.info('NAVIGATION', `Navegación de módulo: ${activeModule.toUpperCase()} -> ${module.toUpperCase()}`);
     setActiveModule(module);
@@ -55,15 +57,69 @@ export default function App() {
   const lastActiveRideId = useRef<string | null>(null);
   const seenRadarRideIds = useRef<Set<string>>(new Set());
 
+  const triggerInAppAlert = useCallback((title: string, msg: string, type: 'info' | 'success' | 'alert' = 'info') => {
+    // Respect notification config
+    if (currentUser?.settings?.notificationsEnabled === false) return;
+    
+    const id = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+    setNotifications(prev => [...prev, { id, title, message: msg, type }]);
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 5500);
+  }, [currentUser?.settings?.notificationsEnabled]);
+
   const toggleRole = async () => {
     if (!currentUser) return;
-    const newRole = currentUser.role === UserRole.DRIVER ? UserRole.PASSENGER : UserRole.DRIVER;
+
+    // Concurrency / State Safety: Bloquear cambio de rol si existe una operación activa
+    if (
+      lastActiveRideStatus.current &&
+      [
+        RideStatus.SEARCHING_DRIVER,
+        RideStatus.DRIVER_ASSIGNED,
+        RideStatus.DRIVER_ARRIVING,
+        RideStatus.WAITING_FOR_OTP,
+        RideStatus.IN_PROGRESS
+      ].includes(lastActiveRideStatus.current as RideStatus)
+    ) {
+      triggerInAppAlert(
+        'CAMBIO DE ROL BLOQUEADO',
+        'No puedes alternar de rol mientras mantienes una solicitud o viaje activo en curso.',
+        'alert'
+      );
+      return;
+    }
+
+    const currentActive = currentUser.activeRole || currentUser.role;
+    const newRole = (currentActive === UserRole.DRIVER || currentActive === 'MOTORIZADO') 
+      ? UserRole.PASSENGER 
+      : UserRole.DRIVER;
+
+    const currentRolesEnabled = currentUser.rolesEnabled && currentUser.rolesEnabled.length > 0
+      ? currentUser.rolesEnabled
+      : [currentUser.role || UserRole.PASSENGER];
+    
+    const updatedRolesEnabled = Array.from(new Set([...currentRolesEnabled, newRole]));
+
     try {
-      await setDoc(doc(db, 'users', currentUser.uid), { role: newRole }, { merge: true });
+      await setDoc(doc(db, 'users', currentUser.uid), {
+        role: newRole,
+        activeRole: newRole,
+        rolesEnabled: updatedRolesEnabled
+      }, { merge: true });
+      
       setCurrentUser({
         ...currentUser,
-        role: newRole
+        role: newRole,
+        activeRole: newRole,
+        rolesEnabled: updatedRolesEnabled
       });
+
+      triggerInAppAlert(
+        'ROL ACTUALIZADO',
+        `Sesión multirrol activa: ${newRole === UserRole.DRIVER ? 'MOTORIZADO' : 'CLIENTE'}`,
+        'info'
+      );
     } catch (err) {
       console.error("Failed to switch role:", err);
     }
@@ -98,17 +154,6 @@ export default function App() {
   // Real-time In-App Notification engine based on Firestore transitions
   useEffect(() => {
     if (!currentUser) return;
-
-    const triggerInAppAlert = (title: string, msg: string, type: 'info' | 'success' | 'alert' = 'info') => {
-      // Respect notification config
-      if (currentUser.settings?.notificationsEnabled === false) return;
-      
-      const id = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-      setNotifications(prev => [...prev, { id, title, message: msg, type }]);
-      setTimeout(() => {
-        setNotifications(prev => prev.filter(n => n.id !== id));
-      }, 5500);
-    };
 
     // Tracker 1: Active ride status changes
     const ridesQuery = query(
@@ -199,7 +244,7 @@ export default function App() {
             const createdAtObj = rData.createdAt as { seconds?: number };
             const createdMs = createdAtObj?.seconds ? createdAtObj.seconds * 1000 : Date.now();
             if (Date.now() - createdMs < 120000) { // last 2 minutes
-              triggerInAppAlert('ALERTA RADAR', `Nuevo viaje disponible en Trujillo. Tarifa protegida: $${rData.protectedPrice}.`, 'alert');
+              triggerInAppAlert('ALERTA RADAR', `Nuevo viaje disponible en tu zona. Tarifa protegida: S/ ${rData.protectedPrice}.`, 'alert');
             }
           }
         });
@@ -281,7 +326,17 @@ export default function App() {
               </div>
             </div>
             
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowHeartTestModal(true)}
+                className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-[#39FF14]/15 hover:bg-[#39FF14]/25 text-[#39FF14] border border-[#39FF14]/50 rounded-xl text-xs font-mono font-black uppercase tracking-wider transition-all shadow-glow"
+                title="Prueba del Corazón Operativo: Fase 1"
+              >
+                <Zap size={15} className="animate-pulse text-[#39FF14]" />
+                <span className="hidden sm:inline">Prueba Corazón</span>
+                <span className="sm:hidden">Test Fase 1</span>
+              </button>
+
               {!currentUser && (
                 <button 
                   onClick={() => setShowConfig(!showConfig)}
@@ -294,11 +349,18 @@ export default function App() {
               {currentUser && (
               <div className="flex items-center gap-4">
                 <div className="flex flex-col items-end">
-                  <span className="text-[9px] font-mono text-[#39FF14] uppercase tracking-widest leading-none mb-1">
-                    {currentUser.role === UserRole.DRIVER 
-                      ? (currentLang === 'es' ? 'OPERADOR' : 'OPERATOR') 
-                      : (currentLang === 'es' ? 'CLIENTE' : 'CLIENT')}
-                  </span>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    {currentUser.rolesEnabled && currentUser.rolesEnabled.length > 1 && (
+                      <span className="text-[8px] font-mono bg-[#39FF14]/20 text-[#39FF14] px-1.5 py-0.5 rounded border border-[#39FF14]/40 font-bold uppercase tracking-widest">
+                        MULTIRROL
+                      </span>
+                    )}
+                    <span className="text-[9px] font-mono text-[#39FF14] uppercase tracking-widest leading-none">
+                      {(currentUser.activeRole === UserRole.DRIVER || currentUser.role === UserRole.DRIVER)
+                        ? (currentLang === 'es' ? 'MOTORIZADO' : 'OPERATOR') 
+                        : (currentLang === 'es' ? 'CLIENTE' : 'CLIENT')}
+                    </span>
+                  </div>
                   <span className="text-sm font-bold uppercase tracking-tight">{currentUser.fullName}</span>
                 </div>
                 <button
@@ -330,8 +392,36 @@ export default function App() {
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 1.05 }}
-                className="py-12"
+                className="py-6 sm:py-12"
               >
+                {/* Banner de Acceso Inmediato a la Prueba del Corazón (Sin Registro) */}
+                <div className="mb-8 p-5 rounded-2xl bg-gradient-to-r from-[#0a0a0a] via-[#39FF14]/10 to-[#0a0a0a] border border-[#39FF14]/40 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-12 h-12 rounded-xl bg-[#39FF14]/20 border border-[#39FF14]/50 flex items-center justify-center text-[#39FF14] shrink-0 shadow-glow">
+                      <Zap size={24} className="animate-pulse" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono bg-[#39FF14] text-black font-black uppercase px-2 py-0.5 rounded">FASE 1</span>
+                        <span className="text-[11px] font-mono text-[#39FF14] uppercase tracking-wider font-bold">Prueba del Corazón Operativo</span>
+                      </div>
+                      <h3 className="text-base sm:text-lg font-black text-white uppercase italic tracking-tight mt-0.5">
+                        Pedido + Mapa + Geocodificación + Ruta + Motorizado + GPS Real
+                      </h3>
+                      <p className="text-xs font-mono text-gray-400 mt-1">
+                        Ejecuta la prueba de 20 puntos directamente en este dispositivo físico sin necesidad de registrarte.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowHeartTestModal(true)}
+                    className="w-full sm:w-auto bg-[#39FF14] hover:bg-[#32e012] text-black px-6 py-3.5 rounded-xl font-mono text-xs font-black uppercase tracking-wider shadow-glow transition-all flex items-center justify-center gap-2 shrink-0"
+                  >
+                    <Play size={15} />
+                    <span>Iniciar Prueba Inmediata</span>
+                  </button>
+                </div>
+
                 {showConfig && (
                   <motion.div
                     initial={{ opacity: 0, y: -20 }}
@@ -395,6 +485,17 @@ export default function App() {
                     <FlaskConical size={14} />
                     {currentLang === 'es' ? 'Simulador LSO' : 'LSO Simulator'}
                   </button>
+                  <button
+                    onClick={() => handleModuleChange('heart_test')}
+                    className={`flex-1 min-w-[130px] py-3 text-xs font-mono uppercase font-black rounded-xl transition-all tracking-wider flex items-center justify-center gap-2 ${
+                      activeModule === 'heart_test'
+                        ? 'bg-[#39FF14] text-black shadow-glow'
+                        : 'text-[#39FF14] hover:bg-[#39FF14]/10 hover:text-[#39FF14] border border-[#39FF14]/30'
+                    }`}
+                  >
+                    <Zap size={14} className={activeModule === 'heart_test' ? '' : 'animate-pulse'} />
+                    {currentLang === 'es' ? 'Prueba Corazón' : 'Heart Test'}
+                  </button>
                   {/* Tab de Administración de Conductores */}
                   {(currentUser.isAdmin || currentUser.email === 'bkheelsec@gmail.com' || currentUser.role === 'admin') && (
                     <button
@@ -453,6 +554,8 @@ export default function App() {
                   <ControlCenter user={currentUser} onUserUpdate={(updated) => setCurrentUser(updated)} />
                 ) : activeModule === 'admin' ? (
                   <AdminDashboard adminUser={currentUser} />
+                ) : activeModule === 'heart_test' ? (
+                  <OperationalHeartTestView />
                 ) : (
                   <SimulationLab />
                 )}
@@ -461,6 +564,22 @@ export default function App() {
           </AnimatePresence>
         </main>
   
+        {/* Modal de Acceso Directo a la Prueba del Corazón (Sin Registro o Flotante) */}
+        <AnimatePresence>
+          {showHeartTestModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-2xl p-2 sm:p-6 overflow-y-auto flex items-center justify-center"
+            >
+              <div className="w-full max-w-6xl my-auto">
+                <OperationalHeartTestView onClose={() => setShowHeartTestModal(false)} />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Footer */}
         <footer className="py-10 text-center relative z-10">
           <div className="max-w-xs mx-auto mb-4 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>

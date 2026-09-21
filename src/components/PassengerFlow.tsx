@@ -49,8 +49,17 @@ import {
   PlusCircle, 
   Download, 
   CheckCircle, 
-  AlertTriangle 
+  AlertTriangle,
+  Package
 } from 'lucide-react';
+import ZenithOrderCreationModal from './delivery/ZenithOrderCreationModal';
+import ZenithActiveOperationHUD from './delivery/ZenithActiveOperationHUD';
+import {
+  getLastKnownLocation,
+  requestCurrentBrowserPosition,
+  reverseGeocodeLocation,
+  PERU_NEUTRAL_CENTER
+} from '../services/geoContextService';
 
 interface PassengerFlowProps {
   user: User;
@@ -61,10 +70,49 @@ type PipelineStep = 'idle' | 'calculating' | 'voucher' | 'confirming_payment' | 
 export default function PassengerFlow({ user }: PassengerFlowProps) {
   const [activeRide, setActiveRide] = useState<Ride | null>(null);
   
-  // Geolocation & Route selection states
-  const [origin, setOrigin] = useState<Location>({ address: 'Trujillo, La Libertad, Peru', lat: -8.11189, lng: -79.02875 });
-  const [destination, setDestination] = useState<Location>({ address: '', lat: -8.12189, lng: -79.01875 });
+  // Geolocation & Route selection states (Multiciudad Perú dinámico)
+  const [origin, setOrigin] = useState<Location>(() => {
+    const last = getLastKnownLocation();
+    if (last) {
+      return { address: 'Ubicación actual', lat: last.lat, lng: last.lng };
+    }
+    return { address: 'Perú', lat: PERU_NEUTRAL_CENTER.lat, lng: PERU_NEUTRAL_CENTER.lng };
+  });
+  const [destination, setDestination] = useState<Location>({ address: '', lat: 0, lng: 0 });
   const [showChat, setShowChat] = useState(false);
+
+  // Detección inicial de GPS para centrar y orientar el origen del pasajero en cualquier ciudad del Perú
+  useEffect(() => {
+    let isMounted = true;
+    requestCurrentBrowserPosition()
+      .then(async (coords) => {
+        if (!isMounted) return;
+        try {
+          const geo = await reverseGeocodeLocation(coords.lat, coords.lng);
+          if (isMounted) {
+            setOrigin({
+              address: geo.formattedAddress,
+              lat: coords.lat,
+              lng: coords.lng
+            });
+          }
+        } catch {
+          if (isMounted) {
+            setOrigin({
+              address: 'Mi ubicación GPS',
+              lat: coords.lat,
+              lng: coords.lng
+            });
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('[ZENITH-PASSENGER] GPS pasivo no disponible:', err?.message || err);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
   
   // Pipeline state machine
   const [pipelineStep, setPipelineStep] = useState<PipelineStep>('idle');
@@ -76,8 +124,7 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
   const [passengerFeedback, setPassengerFeedback] = useState<string>('');
 
   // Passenger Payment Center V2 states
-  const [passengerWallet, setPassengerWallet] = useState<any>(null);
-  const [selectedMethod, setSelectedMethod] = useState<'card' | 'yape' | 'plin' | 'wallet' | 'cash'>('wallet');
+  const [selectedMethod, setSelectedMethod] = useState<'card' | 'yape' | 'plin' | 'cash'>('cash');
   const [promoCode, setPromoCode] = useState('');
   const [appliedPromo, setAppliedPromo] = useState<any>(null);
   const [paymentError, setPaymentError] = useState<string | null>(null);
@@ -85,15 +132,51 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
   const [reloadAmount, setReloadAmount] = useState<number>(30);
   const [reloadingWallet, setReloadingWallet] = useState(false);
   const [showPaymentCenter, setShowPaymentCenter] = useState(false);
-  const [paymentCenterTab, setPaymentCenterTab] = useState<'wallet' | 'history' | 'billing'>('wallet');
+  const [paymentCenterTab, setPaymentCenterTab] = useState<'history' | 'billing'>('history');
   const [pastRides, setPastRides] = useState<Ride[]>([]);
+  const [showOrderCreationModal, setShowOrderCreationModal] = useState(false);
+  const [clearingDebt, setClearingDebt] = useState(false);
 
-  // Load passenger wallet and historical rides
+  const handleClearDebt = async () => {
+    if (!user.pendingDebt || user.pendingDebt <= 0) return;
+    setClearingDebt(true);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        pendingDebt: 0,
+        pendingDebtReason: null,
+        updatedAt: serverTimestamp()
+      });
+      alert('Deuda regularizada exitosamente en el sistema Zénith.');
+    } catch (e: any) {
+      console.error(e);
+      alert('Error al regularizar deuda: ' + e.message);
+    } finally {
+      setClearingDebt(false);
+    }
+  };
+
+  // Initialize real GPS position for passenger on mount
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setOrigin({
+            address: `Mi Ubicación Actual (${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)})`,
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          });
+        },
+        (error) => {
+          console.warn("[ZENITH-GPS] No se pudo obtener la ubicación del pasajero:", error.message);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    }
+  }, []);
+
+  // Load historical rides
   const loadPassengerFinancials = async () => {
     try {
-      const w = await WalletService.getOrCreateWallet(user.uid);
-      setPassengerWallet(w);
-      
       // Load last 5 rides for invoice center
       const q = query(
         collection(db, 'rides'),
@@ -220,17 +303,6 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
     const finalPrice = Math.max(0, Number((pricing.totalFare - discountAmount).toFixed(2)));
 
     try {
-      // 1. If using wallet, validate balance
-      if (selectedMethod === 'wallet') {
-        const wallet = await WalletService.getOrCreateWallet(user.uid);
-        if (wallet.availableBalance < finalPrice) {
-          throw new Error(`Saldo insuficiente en Billetera Zénith (Disponible: S/ ${wallet.availableBalance.toFixed(2)}). Por favor recargue fondos.`);
-        }
-        
-        // Process debit from passenger wallet
-        await WalletService.withdrawFunds(user.uid, finalPrice, `Pago de viaje - Ruta: ${destination.address.substring(0, 20)}...`);
-      }
-
       // 2. Initialize payment record in state machine using PaymentEngine
       const tempRide: any = {
         id: `ride_temp_${Date.now()}`,
@@ -414,6 +486,9 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
 
     return (
       <div className="space-y-6" id="passenger_active_trip_screen">
+        {/* ZÉNITH MVP V1.1 ACTIVE OPERATION HUD */}
+        <ZenithActiveOperationHUD ride={activeRide} user={user} />
+
         <div className="hud-card p-6 flex items-center justify-between border-l-4 border-l-[#39FF14]">
           <div>
             <div className="flex items-center gap-2 mb-1">
@@ -669,6 +744,53 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
     <div className="space-y-8" id="passenger_creation_flow">
       {pipelineStep === 'idle' ? (
         <>
+          {/* DEUDA PENDIENTE REGULARIZATION BANNER */}
+          {user.pendingDebt && user.pendingDebt > 0 && (
+            <div className="hud-card p-5 bg-red-500/15 border-2 border-red-500/40 rounded-3xl text-left space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5 text-red-400 font-mono font-bold text-xs uppercase">
+                  <AlertTriangle size={18} />
+                  <span>Deuda Pendiente de Regularización</span>
+                </div>
+                <span className="text-sm font-mono font-black text-white bg-red-500/20 px-3 py-1 rounded-full border border-red-500/30">
+                  S/ {user.pendingDebt.toFixed(2)}
+                </span>
+              </div>
+              <p className="text-[11px] font-mono text-gray-300">
+                Causa registrada: <strong className="text-white">{user.pendingDebtReason || 'Penalidad de cancelación previa'}</strong>. La regla de Zénith exige regularizar el saldo antes de emitir nuevas solicitudes.
+              </p>
+              <button
+                onClick={handleClearDebt}
+                disabled={clearingDebt}
+                className="w-full py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white font-mono text-xs uppercase font-black tracking-wider transition-all shadow-glow-red cursor-pointer"
+              >
+                {clearingDebt ? 'Regularizando...' : 'Regularizar Saldo de Deuda Ahora'}
+              </button>
+            </div>
+          )}
+
+          {/* QUICK CTA: NUEVA OPERACIÓN MOTORIZADO ZÉNITH MVP V1.1 */}
+          <div className="hud-card p-6 bg-gradient-to-r from-black/80 to-[#39FF14]/10 border border-[#39FF14]/30 rounded-3xl text-left flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-[#39FF14]/20 text-[#39FF14] font-black uppercase tracking-widest">
+                MVP V1.1 OPERATIVO
+              </span>
+              <h3 className="text-lg font-black uppercase italic tracking-tight text-white">
+                Nueva Operación de Entrega en Moto
+              </h3>
+              <p className="text-xs text-gray-400 font-mono">
+                Control de 4 protagonistas, cláusula de contingencia, niveles de evidencia y custodia estipulada.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowOrderCreationModal(true)}
+              className="py-3 px-6 rounded-2xl bg-[#39FF14] hover:bg-[#32e012] text-black font-mono text-xs font-black uppercase tracking-wider shadow-glow flex items-center gap-2 shrink-0 cursor-pointer"
+            >
+              <Package size={16} />
+              Crear Operación
+            </button>
+          </div>
+
           <div className="hud-card p-8 space-y-6 bg-black/40 backdrop-blur-xl">
             <div className="flex items-center gap-3">
               <Navigation size={24} className="text-[#39FF14]" />
@@ -732,9 +854,6 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
                 Centro de Pagos y Facturación Zénith
               </span>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-mono text-[#39FF14] bg-[#39FF14]/10 px-2.5 py-1 rounded-full border border-[#39FF14]/20">
-                  Saldo: S/ {(passengerWallet?.availableBalance || 0).toFixed(2)}
-                </span>
                 <span className="text-xs text-gray-500 font-bold">{showPaymentCenter ? '▼' : '▲'}</span>
               </div>
             </button>
@@ -750,12 +869,6 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
                   {/* Tabs */}
                   <div className="flex border-b border-white/5 pb-2 gap-2 text-xs">
                     <button
-                      onClick={() => setPaymentCenterTab('wallet')}
-                      className={`px-3 py-1.5 font-mono uppercase rounded-lg cursor-pointer ${paymentCenterTab === 'wallet' ? 'bg-[#39FF14]/20 text-[#39FF14]' : 'text-gray-400 hover:text-white'}`}
-                    >
-                      Billetera Digital
-                    </button>
-                    <button
                       onClick={() => setPaymentCenterTab('history')}
                       className={`px-3 py-1.5 font-mono uppercase rounded-lg cursor-pointer ${paymentCenterTab === 'history' ? 'bg-[#39FF14]/20 text-[#39FF14]' : 'text-gray-400 hover:text-white'}`}
                     >
@@ -769,83 +882,13 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
                     </button>
                   </div>
 
-                  {/* Tab Content: Wallet */}
-                  {paymentCenterTab === 'wallet' && (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="bg-neutral-900/60 p-4 rounded-2xl border border-white/5 space-y-1">
-                          <span className="text-[8px] font-mono text-gray-500 uppercase tracking-widest block">Saldo Disponible</span>
-                          <span className="text-2xl font-black text-[#39FF14] font-mono block">
-                            S/ {(passengerWallet?.availableBalance || 0).toFixed(2)}
-                          </span>
-                          <span className="text-[9px] font-mono text-emerald-400 block">
-                            Saldo Promocional: S/ {(passengerWallet?.promotionalBalance || 0).toFixed(2)}
-                          </span>
-                        </div>
-
-                        <div className="bg-neutral-900/60 p-4 rounded-2xl border border-white/5 space-y-3">
-                          <span className="text-[8px] font-mono text-gray-500 uppercase tracking-widest block">Recargar Fondos Express</span>
-                          
-                          <div className="flex gap-2">
-                            {[10, 20, 50, 100].map((amt) => (
-                              <button
-                                key={amt}
-                                onClick={() => setReloadAmount(amt)}
-                                className={`flex-1 py-1 text-xs font-mono font-bold rounded-lg border cursor-pointer transition-all ${reloadAmount === amt ? 'bg-[#39FF14] border-[#39FF14] text-black' : 'bg-black border-white/10 text-white'}`}
-                              >
-                                S/ {amt}
-                              </button>
-                            ))}
-                          </div>
-
-                          <button
-                            disabled={reloadingWallet}
-                            onClick={async () => {
-                              setReloadingWallet(true);
-                              try {
-                                await WalletService.depositFunds(user.uid, reloadAmount, 'Yape/Plin');
-                                await loadPassengerFinancials();
-                              } catch (e) {
-                                console.error(e);
-                              } finally {
-                                setReloadingWallet(false);
-                              }
-                            }}
-                            className="w-full bg-[#39FF14]/10 hover:bg-[#39FF14]/20 text-[#39FF14] border border-[#39FF14]/20 hover:border-[#39FF14]/40 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest font-mono cursor-pointer transition-all flex items-center justify-center gap-1.5"
-                          >
-                            <PlusCircle size={12} /> {reloadingWallet ? 'Cargando...' : `Recargar S/ ${reloadAmount}.00`}
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Display active movements for passenger */}
-                      <div className="space-y-2">
-                        <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest block border-b border-white/5 pb-1">Movimientos Recientes</span>
-                        <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
-                          {(!passengerWallet?.movements || passengerWallet.movements.length === 0) ? (
-                            <p className="text-[10px] font-mono text-gray-600 uppercase text-center py-2">Sin movimientos en este periodo.</p>
-                          ) : (
-                            passengerWallet.movements.map((mov: any) => (
-                              <div key={mov.id} className="bg-black/30 border border-white/5 p-2 rounded-xl flex items-center justify-between text-[11px]">
-                                <span className="text-white font-medium">{mov.description}</span>
-                                <span className={`font-mono font-bold ${mov.type === 'deposit' ? 'text-[#39FF14]' : 'text-red-400'}`}>
-                                  {mov.type === 'deposit' ? '+' : '-'} S/ {mov.amount.toFixed(2)}
-                                </span>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
                   {/* Tab Content: History */}
                   {paymentCenterTab === 'history' && (
                     <div className="space-y-2">
                       <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest block border-b border-white/5 pb-1">Ledger De Viajes Realizados</span>
                       <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
                         {pastRides.length === 0 ? (
-                          <p className="text-xs font-mono text-gray-600 uppercase text-center py-4">No se registran viajes en Trujillo.</p>
+                          <p className="text-xs font-mono text-gray-600 uppercase text-center py-4">No se registran viajes finalizados.</p>
                         ) : (
                           pastRides.map((r) => (
                             <div key={r.id} className="bg-neutral-900/60 border border-white/5 p-3 rounded-xl flex items-center justify-between text-xs">
@@ -861,8 +904,8 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
                             </div>
                           ))
                         )}
-                      </div>
-                    </div>
+                        </div>
+                        </div>
                   )}
 
                   {/* Tab Content: Billing */}
@@ -900,7 +943,7 @@ CLIENTE: ${user.fullName.toUpperCase()}
 MÉTODO DE PAGO: ${(r.paymentMethod || 'wallet').toUpperCase()}
 =========================================
 DETALLE:
-Servicio de transporte urbano - Trujillo
+Servicio de transporte urbano - ZÉNITH Perú
 De: ${r.origin.address}
 A: ${r.destination.address}
 
@@ -968,8 +1011,8 @@ Consulte su comprobante en la web oficial.`;
                             </div>
                           ))
                         )}
-                      </div>
-                    </div>
+                        </div>
+                        </div>
                   )}
 
                 </motion.div>
@@ -1044,15 +1087,8 @@ Consulte su comprobante en la web oficial.`;
 
                   {/* PAYMENT METHOD CHOICES */}
                   <div className="border-t border-white/5 pt-4 text-left">
-                    <p className="text-[9px] font-mono text-gray-500 uppercase font-black tracking-widest mb-2">Seleccione Método de Pago Seguro</p>
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                      <button
-                        onClick={() => setSelectedMethod('wallet')}
-                        className={`py-2 px-3 border rounded-xl flex flex-col items-center gap-1 cursor-pointer transition-all ${selectedMethod === 'wallet' ? 'bg-[#39FF14]/10 border-[#39FF14] text-[#39FF14]' : 'bg-black/30 border-white/10 text-white hover:border-white/20'}`}
-                      >
-                        <CreditCard size={14} />
-                        <span className="text-[9px] font-mono font-bold uppercase">Wallet V2</span>
-                      </button>
+                    <p className="text-[9px] font-mono text-gray-500 uppercase font-black tracking-widest mb-2">Seleccione Método de Pago (Directo al Conductor)</p>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <button
                         onClick={() => setSelectedMethod('yape')}
                         className={`py-2 px-3 border rounded-xl flex flex-col items-center gap-1 cursor-pointer transition-all ${selectedMethod === 'yape' ? 'bg-purple-600/10 border-purple-500 text-purple-400' : 'bg-black/30 border-white/10 text-white hover:border-white/20'}`}
@@ -1082,12 +1118,6 @@ Consulte su comprobante en la web oficial.`;
                         <span className="text-[9px] font-mono font-bold uppercase">Efectivo</span>
                       </button>
                     </div>
-
-                    {selectedMethod === 'wallet' && (
-                      <p className="text-[9px] font-mono text-gray-400 mt-2">
-                        ✓ Pago descontado de su Billetera Zénith. Disponible: <strong className="text-[#39FF14]">S/ {(passengerWallet?.availableBalance || 0).toFixed(2)}</strong>.
-                      </p>
-                    )}
                   </div>
 
                   {/* PROMO CODE BOX */}
@@ -1226,6 +1256,18 @@ Consulte su comprobante en la web oficial.`;
           }
         }}
       />
+      {/* ZÉNITH MVP V1.1 ORDER CREATION MODAL */}
+      {showOrderCreationModal && (
+        <ZenithOrderCreationModal
+          user={user}
+          initialOrigin={origin}
+          onClose={() => setShowOrderCreationModal(false)}
+          onOrderCreated={(orderId) => {
+            setShowOrderCreationModal(false);
+            console.log('[ZENITH-ORDER-CREATED]', orderId);
+          }}
+        />
+      )}
     </div>
   );
 }

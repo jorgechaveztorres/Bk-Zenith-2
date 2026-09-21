@@ -8,13 +8,15 @@ interface PlacesAutocompleteProps {
   value: string;
   onLocationSelect: (location: Location) => void;
   icon: React.ReactNode;
+  locationBias?: google.maps.LatLngLiteral;
 }
 
 export default function PlacesAutocomplete({
   placeholder,
   value,
   onLocationSelect,
-  icon
+  icon,
+  locationBias
 }: PlacesAutocompleteProps) {
   const [inputValue, setInputValue] = useState(value);
   const [predictions, setPredictions] = useState<google.maps.places.AutocompletePrediction[]>([]);
@@ -63,11 +65,23 @@ export default function PlacesAutocomplete({
     if (!autocompleteService.current) return;
 
     setLoading(true);
+
+    const request: google.maps.places.AutocompletionRequest = {
+      input: text,
+      sessionToken: sessionToken.current || undefined,
+      componentRestrictions: { country: 'pe' },
+    };
+
+    if (locationBias && window.google?.maps?.Circle) {
+      // Sesgo suave de 50km alrededor del usuario para priorizar su localidad sin impedir búsquedas en otras ciudades
+      request.locationBias = new window.google.maps.Circle({
+        center: locationBias,
+        radius: 50000,
+      });
+    }
+
     autocompleteService.current.getPlacePredictions(
-      {
-        input: text,
-        sessionToken: sessionToken.current || undefined,
-      },
+      request,
       (preds, status) => {
         setLoading(false);
         if (status === 'OK' && preds) {

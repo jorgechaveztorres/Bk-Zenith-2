@@ -70,58 +70,7 @@ export class TransactionEngine {
     status: PaymentState;
     idempotencyKey?: string;
   }): Promise<TransactionRecord> {
-    try {
-      LoggingService.info('TRANSACTION_ENGINE', `Iniciando registro de transacción para viaje ${params.rideId}`);
-
-      // Check for duplicate key if provided (Idempotency check)
-      if (params.idempotencyKey) {
-        const q = query(
-          collection(db, this.collectionName),
-          where('idempotencyKey', '==', params.idempotencyKey)
-        );
-        const snapshot = await getDocs(q);
-        if (!snapshot.empty) {
-          LoggingService.warn('TRANSACTION_ENGINE', `Transacción duplicada interceptada. Llave idempotente: ${params.idempotencyKey}`);
-          return snapshot.docs[0].data() as TransactionRecord;
-        }
-      }
-
-      const txId = `TX_${Date.now()}_${Math.random().toString(36).substring(2, 11).toUpperCase()}`;
-      
-      const draftRecord: Omit<TransactionRecord, 'hash' | 'signature'> = {
-        id: txId,
-        rideId: params.rideId,
-        passengerId: params.passengerId,
-        driverId: params.driverId,
-        paymentMethod: params.paymentMethod,
-        amount: params.amount,
-        commission: params.commission,
-        status: params.status,
-        timestamp: new Date().toISOString(),
-        idempotencyKey: params.idempotencyKey
-      };
-
-      const hash = this.calculateHash(draftRecord);
-      const signature = this.generateSignature(hash);
-
-      const finalRecord: TransactionRecord = {
-        ...draftRecord,
-        hash,
-        signature
-      };
-
-      // Guardar en Firestore para contabilidad permanente
-      await addDoc(collection(db, this.collectionName), {
-        ...finalRecord,
-        createdAt: serverTimestamp()
-      });
-
-      LoggingService.info('TRANSACTION_ENGINE', `Transacción registrada exitosamente. ID: ${txId} | Estado: ${params.status}`);
-      return finalRecord;
-    } catch (error) {
-      LoggingService.error('TRANSACTION_ENGINE', 'Error al registrar transacción financiera:', error);
-      throw error;
-    }
+    throw new Error('Server Authority Violation: Transactions cannot be registered from the client SDK. Use Backend API.');
   }
 
   /**

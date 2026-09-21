@@ -1,13 +1,15 @@
 import React, { useEffect, useRef } from 'react';
 import { APIProvider, Map, AdvancedMarker, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
 import { MapPin, Navigation } from 'lucide-react';
+import { PERU_NEUTRAL_CENTER, getLastKnownLocation } from '../services/geoContextService';
 
-export const API_KEY =
+export const API_KEY = (
   process.env.GOOGLE_MAPS_PLATFORM_KEY ||
   (import.meta as any).env?.VITE_GOOGLE_MAPS_PLATFORM_KEY ||
   (globalThis as any).GOOGLE_MAPS_PLATFORM_KEY ||
-  'AIzaSyBBkr2N2bzcruQwDj4Cy6lCb-4DqUFuuEs';
-export const hasValidKey = Boolean(API_KEY) && API_KEY !== 'YOUR_API_KEY';
+  ''
+) as string;
+export const hasValidKey = Boolean(API_KEY) && API_KEY !== 'YOUR_API_KEY' && API_KEY !== 'MY_GOOGLE_MAPS_KEY' && API_KEY.trim().length > 0;
 
 export const DARK_MAP_STYLE = [
   { elementType: "geometry", stylers: [{ color: "#242f3e" }] },
@@ -245,20 +247,30 @@ function MapRenderTracer({ markers, polylinePointsCount }: {
 }
 
 export default function MapContainer({ 
-  center = { lat: -8.11189, lng: -79.02875 }, 
-  zoom = 13,
+  center, 
+  zoom,
   markers = [],
   onMapClick,
   height = '400px'
 }: MapContainerProps) {
   const [polylinePointsCount, setPolylinePointsCount] = React.useState<number>(0);
 
+  // Jerarquía de centrado multiciudad Perú:
+  // 1. Ubicación explícita/actual provista por props
+  // 2. Última ubicación conocida persistida en el dispositivo
+  // 3. Vista neutral de Perú
+  const lastKnown = React.useMemo(() => getLastKnownLocation(), []);
+  const effectiveCenter: google.maps.LatLngLiteral = center || lastKnown || PERU_NEUTRAL_CENTER;
+  const effectiveZoom: number = zoom !== undefined 
+    ? zoom 
+    : (center || lastKnown ? 13 : 6);
+
   if (!hasValidKey) {
     return (
       <div className="flex flex-col items-center justify-center hud-card p-8 text-center" style={{ height }}>
         <h2 className="text-xl font-bold mb-4 uppercase italic">Protocolo de Google Maps Requerido</h2>
         <p className="text-sm text-gray-500 mb-6 max-w-sm font-mono uppercase tracking-widest leading-relaxed">
-          Información operativa restringida. Proporciona <code>GOOGLE_MAPS_PLATFORM_KEY</code> en el panel de Secretos.
+          Información operativa restringida. Proporciona <code>GOOGLE_MAPS_PLATFORM_KEY</code> perteneciente al proyecto <code>gen-lang-client-0838883154</code>.
         </p>
       </div>
     );
@@ -272,8 +284,8 @@ export default function MapContainer({
     <div className="w-full relative rounded-2xl overflow-hidden border border-white/5 shadow-tactical" style={{ height }}>
       <APIProvider apiKey={API_KEY}>
         <Map
-          defaultCenter={center}
-          defaultZoom={zoom}
+          defaultCenter={effectiveCenter}
+          defaultZoom={effectiveZoom}
           mapId="DEMO_MAP_ID"
           onClick={onMapClick}
           styles={DARK_MAP_STYLE}
@@ -282,7 +294,7 @@ export default function MapContainer({
           disableDefaultUI={true}
           zoomControl={true}
         >
-          {!hasRoute && <ViewportEngineV2 center={center} markers={markers} />}
+          {!hasRoute && <ViewportEngineV2 center={effectiveCenter} markers={markers} />}
           <MapRenderTracer markers={markers} polylinePointsCount={polylinePointsCount} />
           {markers.map(marker => (
             <AdvancedMarker key={marker.id} position={marker.position} title={marker.title}>

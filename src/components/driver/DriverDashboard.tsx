@@ -52,6 +52,8 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
   const [settlementSuccessMsg, setSettlementSuccessMsg] = useState<string | null>(null);
   const [settlementErrorMsg, setSettlementErrorMsg] = useState<string | null>(null);
   const [settling, setSettling] = useState(false);
+  const [reloadAmount, setReloadAmount] = useState<number>(30);
+  const [reloadingWallet, setReloadingWallet] = useState(false);
 
   // Load Wallet
   const loadWallet = async () => {
@@ -427,6 +429,47 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
                   <span className="text-[8px] font-mono text-gray-500 uppercase tracking-widest">Este mes</span>
                   <p className="text-sm font-black text-[#39FF14] mt-0.5 font-mono">S/ {(driverWallet?.monthlyEarnings || (driverWallet?.weeklyEarnings * 4) || 0).toFixed(2)}</p>
                 </div>
+              </div>
+
+              {/* Yape Top Up Console */}
+              <div className="bg-neutral-950/80 border border-white/5 rounded-2xl p-5 space-y-4">
+                <h5 className="text-[10px] font-mono font-black text-[#39FF14] uppercase tracking-wider flex items-center gap-1.5">
+                  <Lock size={12} /> Recarga de Billetera Vía Yape/Plin
+                </h5>
+                <p className="text-[11px] text-gray-400">
+                  Pague sus deudas de efectivo o recargue su saldo directamente desde su billetera digital Yape o Plin.
+                </p>
+                
+                <div className="flex gap-2">
+                  {[10, 20, 50, 100].map((amt) => (
+                    <button
+                      key={amt}
+                      onClick={() => setReloadAmount(amt)}
+                      className={`flex-1 py-2 text-xs font-mono font-bold rounded-lg border cursor-pointer transition-all ${reloadAmount === amt ? 'bg-[#39FF14] border-[#39FF14] text-black' : 'bg-black border-white/10 text-white hover:border-white/20'}`}
+                    >
+                      S/ {amt}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  disabled={reloadingWallet}
+                  onClick={async () => {
+                    setReloadingWallet(true);
+                    try {
+                      await WalletService.depositFunds(user.uid, reloadAmount, 'Yape/Plin');
+                      await loadWallet();
+                      alert(`Se han recargado S/ ${reloadAmount}.00 exitosamente a su billetera.`);
+                    } catch (e) {
+                      console.error(e);
+                      alert('Error al recargar.');
+                    } finally {
+                      setReloadingWallet(false);
+                    }
+                  }}
+                  className="w-full bg-[#39FF14]/10 hover:bg-[#39FF14]/20 text-[#39FF14] border border-[#39FF14]/20 hover:border-[#39FF14]/40 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest font-mono cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                >
+                  {reloadingWallet ? 'Cargando...' : `Recargar S/ ${reloadAmount}.00`}
+                </button>
               </div>
 
               {/* Settlement Payout Console */}

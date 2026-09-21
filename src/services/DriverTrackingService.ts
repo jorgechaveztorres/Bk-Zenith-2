@@ -10,6 +10,7 @@ import { db } from '../firebase/config';
 import { Location } from '../types';
 import { TrackingEngine } from './TrackingEngine';
 import { LoggingService } from './LoggingService';
+import { locationService, GPSMode } from './LocationService';
 
 export interface HardwareValidation {
   isBatteryOk: boolean;
@@ -129,7 +130,7 @@ class DriverTrackingServiceClass {
     }
 
     // Watch position from Geolocation API
-    if (navigator.geolocation) {
+    if (navigator.geolocation && locationService.getGPSMode() === GPSMode.PRODUCTION) {
       this.activeWatchId = navigator.geolocation.watchPosition(
         async (position) => {
           if (!this.isTrackingActive) return;
