@@ -24,6 +24,49 @@ if (typeof globalThis !== 'undefined') {
   }
 }
 
+/**
+ * Headless localStorage shim for the Node/tsx sandbox runner.
+ * Must be installed before importing services that access window.localStorage.
+ */
+function installHeadlessLocalStorageShim(): void {
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    return;
+  }
+
+  const storage = new Map<string, string>();
+  const headlessLocalStorage: Storage = {
+    get length() { return storage.size; },
+    clear() { storage.clear(); },
+    getItem(key: string) { return storage.has(key) ? storage.get(key)! : null; },
+    key(index: number) { return index >= 0 && index < storage.size ? Array.from(storage.keys())[index] ?? null : null; },
+    removeItem(key: string) { storage.delete(key); },
+    setItem(key: string, value: string) { storage.set(String(key), String(value)); }
+  };
+
+  const globalObject = globalThis as typeof globalThis & {
+    localStorage?: Storage;
+    window?: {
+      localStorage: Storage;
+      dispatchEvent?: (event: Event) => boolean;
+      addEventListener?: (...args: any[]) => void;
+      removeEventListener?: (...args: any[]) => void;
+    };
+  };
+
+  globalObject.localStorage = headlessLocalStorage;
+  globalObject.window = globalObject.window ?? {
+    localStorage: headlessLocalStorage,
+    dispatchEvent: () => true,
+    addEventListener: () => {},
+    removeEventListener: () => {}
+  };
+  globalObject.window.localStorage = headlessLocalStorage;
+
+  console.log('[SANDBOX_STORAGE] Headless localStorage initialized.');
+}
+
+installHeadlessLocalStorageShim();
+
 async function main() {
   const results = {
     sandboxEmulator: false,
