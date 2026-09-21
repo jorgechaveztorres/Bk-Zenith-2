@@ -9,20 +9,36 @@ export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 
+// Helper seguro para obtener variables de entorno tanto en Vite (navegador) como en Node/tsx (testing headless)
+function getEnvVar(key: string): string | undefined {
+  if (typeof process !== 'undefined' && process.env && process.env[key] !== undefined) {
+    return process.env[key];
+  }
+  try {
+    const metaEnv = (import.meta as unknown as { env?: Record<string, string> })?.env;
+    if (metaEnv && metaEnv[key] !== undefined) {
+      return metaEnv[key];
+    }
+  } catch {
+    // import.meta puede no estar disponible o no tener env
+  }
+  return undefined;
+}
+
 // Conexión segura a Firebase Local Emulator Suite para Sandbox / Testing aislado
-export const isSandboxEmulatorActive = import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true';
+export const isSandboxEmulatorActive = getEnvVar('VITE_USE_FIREBASE_EMULATOR') === 'true';
 
 if (isSandboxEmulatorActive) {
   try {
-    const firestoreHost = import.meta.env.VITE_FIRESTORE_EMULATOR_HOST || 'localhost';
-    const firestorePort = Number(import.meta.env.VITE_FIRESTORE_EMULATOR_PORT || 8080);
+    const firestoreHost = getEnvVar('VITE_FIRESTORE_EMULATOR_HOST') || 'localhost';
+    const firestorePort = Number(getEnvVar('VITE_FIRESTORE_EMULATOR_PORT') || 8080);
     connectFirestoreEmulator(db, firestoreHost, firestorePort);
 
-    const authUrl = import.meta.env.VITE_AUTH_EMULATOR_URL || 'http://127.0.0.1:9099';
+    const authUrl = getEnvVar('VITE_AUTH_EMULATOR_URL') || 'http://127.0.0.1:9099';
     connectAuthEmulator(auth, authUrl, { disableWarnings: true });
 
-    const storageHost = import.meta.env.VITE_STORAGE_EMULATOR_HOST || 'localhost';
-    const storagePort = Number(import.meta.env.VITE_STORAGE_EMULATOR_PORT || 9199);
+    const storageHost = getEnvVar('VITE_STORAGE_EMULATOR_HOST') || 'localhost';
+    const storagePort = Number(getEnvVar('VITE_STORAGE_EMULATOR_PORT') || 9199);
     connectStorageEmulator(storage, storageHost, storagePort);
 
     console.info('[ZENITH-SANDBOX] Conectado a Firebase Local Emulator Suite.');
