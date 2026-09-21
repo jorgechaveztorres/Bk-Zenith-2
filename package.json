@@ -10,9 +10,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "emulators": "firebase emulators:start --only auth,firestore,storage",
+    "emulators": "firebase emulators:start --project gen-lang-client-0838883154 --only auth,firestore,storage",
     "emulators:export": "firebase emulators:export ./test/emulator-data",
-    "test:sandbox": "firebase emulators:exec --only auth,firestore,storage \"npx tsx scripts/virtual-sandbox-runner.ts\""
+    "test:sandbox": "firebase emulators:exec --project gen-lang-client-0838883154 --only auth,firestore,storage \"npx tsx scripts/virtual-sandbox-runner.ts\""
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
