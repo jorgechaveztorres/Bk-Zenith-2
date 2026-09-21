@@ -1,5 +1,7 @@
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db, assertSandboxIsolated } from '../firebase/config';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import firebaseConfig from '../../firebase-applet-config.json';
+import { db, auth, assertSandboxIsolated } from '../firebase/config';
 import { User, UserRole } from '../types';
 import {
   createDraftOrder,
@@ -71,16 +73,127 @@ export interface VirtualSandboxExecutionResult {
 }
 
 /**
- * Registra o actualiza en Firestore (Emulator) un usuario virtual sintético.
+ * Contraseña canónica y unificada para las identidades sintéticas del Sandbox en Firebase Auth Emulator.
+ */
+export const VIRTUAL_SANDBOX_PASSWORD = 'ZenithSandboxVirtual2026!';
+
+/**
+ * Localiza la identidad virtual registrada dado su UID sintético.
+ */
+export function getVirtualUserByUid(uid: string) {
+  const users = Object.values(VIRTUAL_SANDBOX_USERS);
+  const found = users.find(u => u.uid === uid);
+  if (!found) {
+    throw new Error(`[SANDBOX_AUTH_ERROR] Usuario virtual no registrado para UID: ${uid}`);
+  }
+  return found;
+}
+
+/**
+ * Asegura que la cuenta del usuario virtual exista en Firebase Auth Emulator con su UID sintético
+ * mediante la API oficial de Identity Toolkit del Emulator, sin fabricar ningún JWT artesanal.
+ */
+async function ensureEmulatorAuthAccount(user: { uid: string; email: string; fullName: string }): Promise<void> {
+  const authHost = (typeof process !== 'undefined' && process.env?.FIREBASE_AUTH_EMULATOR_HOST)
+    ? process.env.FIREBASE_AUTH_EMULATOR_HOST
+    : '127.0.0.1:9099';
+  const url = `http://${authHost}/identitytoolkit.googleapis.com/v1/projects/${firebaseConfig.projectId}/accounts`;
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        localId: user.uid,
+        email: user.email,
+        password: VIRTUAL_SANDBOX_PASSWORD,
+        displayName: user.fullName
+      })
+    });
+    if (!res.ok) {
+      // Si la cuenta ya existe, alineamos la contraseña en el emulador
+      const updateUrl = `http://${authHost}/identitytoolkit.googleapis.com/v1/projects/${firebaseConfig.projectId}/accounts:update`;
+      await fetch(updateUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          localId: user.uid,
+          email: user.email,
+          password: VIRTUAL_SANDBOX_PASSWORD,
+          displayName: user.fullName
+        })
+      });
+    }
+  } catch {
+    // Si la llamada directa no es viable en el entorno actual, signInWithEmailAndPassword continuará
+  }
+}
+
+/**
+ * Autentica canónicamente una identidad virtual sintética en Firebase Auth Emulator mediante signInWithEmailAndPassword.
+ * Produce credenciales válidas y oficiales que el SDK propaga automáticamente a Firestore, garantizando que
+ * request.auth != null y request.auth.uid == uid sean reconocidos por Firestore Security Rules.
+ */
+export async function authenticateVirtualSandboxUser(uid: string): Promise<void> {
+  assertSandboxIsolated('Autenticación canónica virtual en Emulator');
+  if (auth.currentUser && auth.currentUser.uid === uid) {
+    return;
+  }
+
+  const virtualUser = getVirtualUserByUid(uid);
+
+  // Asegurar provisión de la cuenta en el emulador
+  await ensureEmulatorAuthAccount(virtualUser);
+
+  // Autenticación estándar y canónica del SDK Web oficial
+  await signInWithEmailAndPassword(auth, virtualUser.email, VIRTUAL_SANDBOX_PASSWORD);
+
+  if (!auth.currentUser || auth.currentUser.uid !== uid) {
+    throw new Error(
+      `[SANDBOX_AUTH_ERROR] Error verificando sesión en Auth SDK: se esperaba UID ${uid}, pero auth.currentUser es ${auth.currentUser?.uid || 'null'}`
+    );
+  }
+}
+
+/**
+ * Registra o actualiza en Firestore (Emulator) un usuario virtual sintético respetando firestore.rules.
+ * Autentica previamente la sesión del SDK con el UID virtual para satisfacer isOwner(userId) en firestore.rules.
+ *
+ * Estrategia estricta create vs update:
+ * 1. Comprueba si 'users/{uid}' existe mediante getDoc().
+ * 2. Si NO existe: Crea el documento inicial completo con setDoc() cumpliendo 'allow create' (role, uid).
+ * 3. Si existe: Actualiza con updateDoc() únicamente los campos permitidos por 'allow update',
+ *    omitiendo estrictamente 'role', 'wallet' e 'isAdmin' para satisfacer:
+ *    !request.resource.data.diff(resource.data).affectedKeys().hasAny(['wallet', 'role', 'isAdmin'])
  */
 export async function seedVirtualSandboxUser(user: typeof VIRTUAL_SANDBOX_USERS.CLIENT | typeof VIRTUAL_SANDBOX_USERS.MOTORIZADO | typeof VIRTUAL_SANDBOX_USERS.MULTIROLE_USER): Promise<void> {
   assertSandboxIsolated('Creación de usuario virtual Sandbox');
+  await authenticateVirtualSandboxUser(user.uid);
+
   const userRef = doc(db, 'users', user.uid);
-  await setDoc(userRef, {
-    ...user,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp()
-  }, { merge: true });
+  const userSnap = await getDoc(userRef);
+
+  if (!userSnap.exists()) {
+    // USUARIO NUEVO: Crear documento inicial completo requerido por 'allow create'
+    await setDoc(userRef, {
+      ...user,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  } else {
+    // USUARIO EXISTENTE: Actualizar únicamente campos permitidos por 'allow update'
+    // 'role', 'wallet' e 'isAdmin' están estrictamente prohibidos en la regla update
+    // Extraemos de forma segura sin propagar campos restringidos ni mutar el objeto original
+    const userCopy = { ...user } as Record<string, unknown>;
+    delete userCopy.role;
+    delete userCopy.wallet;
+    delete userCopy.isAdmin;
+
+    await updateDoc(userRef, {
+      ...userCopy,
+      updatedAt: serverTimestamp()
+    });
+  }
 }
 
 /**
@@ -211,6 +324,7 @@ export async function runVirtualSandboxLifecycle(customOptions?: {
 
   // 6. CLIENTE VIRTUAL PUBLICA EL PEDIDO (ESTADO: PUBLICADO)
   try {
+    await authenticateVirtualSandboxUser(VIRTUAL_SANDBOX_USERS.CLIENT.uid);
     orderRecord = await publishOrder(orderRecord.id);
     if (orderRecord.status !== 'PUBLICADO') {
       throw new Error(`Estado inesperado tras publicación: ${orderRecord.status}`);
@@ -227,6 +341,7 @@ export async function runVirtualSandboxLifecycle(customOptions?: {
 
   // 7. MOTORIZADO VIRTUAL ACEPTA EL PEDIDO ATÓMICAMENTE (ESTADO: ACEPTADO)
   try {
+    await authenticateVirtualSandboxUser(VIRTUAL_SANDBOX_USERS.MOTORIZADO.uid);
     orderRecord = await acceptOrderAsMotorizado(orderRecord.id, {
       driverId: VIRTUAL_SANDBOX_USERS.MOTORIZADO.uid,
       driverName: VIRTUAL_SANDBOX_USERS.MOTORIZADO.fullName,
