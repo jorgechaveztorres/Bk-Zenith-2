@@ -43,15 +43,19 @@ function installHeadlessLocalStorageShim(): void {
     setItem(key: string, value: string) { storage.set(String(key), String(value)); }
   };
 
-  const globalObject = globalThis as typeof globalThis & {
-    localStorage?: Storage;
-    window?: {
-      localStorage: Storage;
-      dispatchEvent?: (event: Event) => boolean;
-      addEventListener?: (...args: any[]) => void;
-      removeEventListener?: (...args: any[]) => void;
-    };
+  type HeadlessWindow = Pick<
+    Window,
+    'dispatchEvent' | 'addEventListener' | 'removeEventListener'
+  > & {
+    localStorage: Storage;
   };
+
+  type HeadlessGlobal = Omit<typeof globalThis, 'localStorage' | 'window'> & {
+    localStorage?: Storage;
+    window?: HeadlessWindow;
+  };
+
+  const globalObject = globalThis as HeadlessGlobal;
 
   globalObject.localStorage = headlessLocalStorage;
   globalObject.window = globalObject.window ?? {
