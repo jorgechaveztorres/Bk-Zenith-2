@@ -68,6 +68,21 @@ service cloud.firestore {
         && request.resource.data.protectedPrice > 0;
 
       allow update: if isSignedIn() && (
+        // Motorizado autenticado: PUBLICADO -> ACEPTADO
+(resource.data.status == 'PUBLICADO' &&
+ !resource.data.keys().hasAny(['driverId']) &&
+ request.resource.data.status == 'ACEPTADO' &&
+ request.resource.data.driverId == request.auth.uid &&
+ request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+   'status',
+   'driverId',
+   'driverName',
+   'driverPhone',
+   'driverPlate',
+   'driverVehicle',
+   'acceptedAt',
+   'updatedAt'
+])) ||
         // El pasajero puede cancelar el viaje o calificarlo al terminar
         (isRidePassenger(resource.data) && (
           (request.resource.data.status == 'CANCELLED' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])) ||

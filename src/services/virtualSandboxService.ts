@@ -38,6 +38,20 @@ export const VIRTUAL_SANDBOX_USERS = {
     rating: 5.0,
     isVirtual: true
   },
+  // Segundo motorizado para pruebas reales de concurrencia
+  MOTORIZADO_02: {
+    uid: 'sandbox-virtual-driver-02',
+    fullName: 'Motorizado Virtual Sandbox 02 (Test)',
+    email: 'driver2.sandbox@zenith.virtual.test',
+    phone: '+51 900 000 004',
+    plate: 'VIRT-998-SBX',
+    vehicleModel: 'Yamaha Crypton 110 Virtual',
+    role: UserRole.DRIVER,
+    activeRole: UserRole.DRIVER,
+    rolesEnabled: [UserRole.DRIVER] as (UserRole | 'CLIENTE' | 'MOTORIZADO')[],
+    rating: 5.0,
+    isVirtual: true
+  },
   // Identidad para verificar multirrol
   MULTIROLE_USER: {
     uid: 'sandbox-virtual-multirole-01',

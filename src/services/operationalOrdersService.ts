@@ -1,4 +1,4 @@
-import { doc, setDoc, updateDoc, onSnapshot, serverTimestamp, runTransaction } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, runTransaction } from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
 
 // ============================================================================
@@ -243,32 +243,55 @@ export async function acceptOrderAsMotorizado(
   try {
     await runTransaction(db, async (transaction) => {
       const orderDoc = await transaction.get(orderRef);
-      if (orderDoc.exists()) {
-        const cloudData = orderDoc.data();
-        // Si el estado en la nube ya no es PUBLICADO ni asignado a este motorizado, rechazar atómicamente
-        if (cloudData.status !== 'PUBLICADO' && cloudData.driverId !== driver.driverId) {
-          throw new Error(
-            `CONCURRENCY_CONFLICT: El pedido ${orderId} ya fue tomado por otro motorizado (${cloudData.driverName || 'Asignado'}). Estado actual: ${cloudData.status}`
-          );
-        }
-        transaction.update(orderRef, {
-          status: 'ACEPTADO',
-          driverId: driver.driverId,
-          driverName: driver.driverName,
-          driverPhone: driver.driverPhone,
-          driverPlate: driver.driverPlate,
-          driverVehicle: driver.driverVehicle || 'Motocicleta Operativa',
-          acceptedAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
+      if (!orderDoc.exists()) {
+        throw new Error(`FIRESTORE_ORDER_NOT_FOUND: Pedido ${orderId} no existe en Firestore.`);
       }
+
+      const cloudData = orderDoc.data();
+      if (cloudData.status !== 'PUBLICADO') {
+        throw new Error(
+          `CONCURRENCY_CONFLICT: El pedido ${orderId} ya fue tomado por otro motorizado (${cloudData.driverName || 'Asignado'}). Estado actual: ${cloudData.status}`
+        );
+      }
+
+      if (typeof cloudData.driverId === 'string' && cloudData.driverId !== driver.driverId) {
+        throw new Error(
+          `CONCURRENCY_CONFLICT: El pedido ${orderId} ya está asignado a otro motorizado (${cloudData.driverId}).`
+        );
+      }
+
+      transaction.update(orderRef, {
+        status: 'ACEPTADO',
+        driverId: driver.driverId,
+        driverName: driver.driverName,
+        driverPhone: driver.driverPhone,
+        driverPlate: driver.driverPlate,
+        driverVehicle: driver.driverVehicle || 'Motocicleta Operativa',
+        acceptedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
     });
-  } catch (err: any) {
-    if (err?.message && err.message.includes('CONCURRENCY_CONFLICT')) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes('CONCURRENCY_CONFLICT')) {
       // Conflicto de concurrencia real: elevar inmediatamente para que no se sobreescriba
       throw err;
     }
-    console.warn('[ZENITH-FIRESTORE] Transacción remota omitida/offline, procediendo con verificación local:', err?.message || err);
+
+    // El emulador puede devolver PERMISSION_DENIED al revalidar las reglas
+    // después de que otro proceso haya confirmado la transacción. Clasificar
+    // ese caso por el estado confirmado en Firestore, sin aceptar localmente.
+    const currentOrder = await getDoc(orderRef);
+    if (currentOrder.exists()) {
+      const currentData = currentOrder.data();
+      if (currentData.status === 'ACEPTADO' && currentData.driverId !== driver.driverId) {
+        throw new Error(
+          `CONCURRENCY_CONFLICT: El pedido ${orderId} fue aceptado por otro motorizado (${currentData.driverId}).`
+        );
+      }
+    }
+
+    throw new Error(`FIRESTORE_ACCEPTANCE_FAILED: ${message}`, { cause: err });
   }
 
   // 2. Verificación y actualización de almacenamiento local
