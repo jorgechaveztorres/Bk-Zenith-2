@@ -127,6 +127,8 @@ export class RideSettlementService {
       const passengerSnap = INTERNAL_WALLET_METHODS.has(paymentMethod)
         ? await transaction.get(passengerRef)
         : null;
+      const driverPresenceRef = db.collection('drivers_online').doc(driverId);
+      const driverPresenceSnap = await transaction.get(driverPresenceRef);
 
       if (!driverSnap.exists) {
         const error: Error & { statusCode?: number } = new Error('Billetera del conductor no encontrada.');
@@ -284,9 +286,6 @@ export class RideSettlementService {
         paymentState: 'SETTLED',
         updatedAt: now
       });
-
-      const driverPresenceRef = db.collection('drivers_online').doc(driverId);
-      const driverPresenceSnap = await transaction.get(driverPresenceRef);
 
       if (driverPresenceSnap.exists) {
         transaction.update(driverPresenceRef, {
