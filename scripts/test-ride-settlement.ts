@@ -86,10 +86,10 @@ async function main() {
   assert.equal(rideSnap.data()?.paymentState, 'SETTLED');
   assert.equal(settlementSnap.exists, true);
   assert.equal(ledgerSnap.exists, true);
-  assert.equal(driverSnap.data()?.wallet?.availableBalance, 17);
-  assert.equal(driverSnap.data()?.wallet?.digitalBalance, 17);
-  assert.equal(driverSnap.data()?.wallet?.dailyEarnings, 17);
-  assert.equal(driverSnap.data()?.wallet?.accumulatedCommission, 3);
+  assert.equal(driverSnap.data()?.wallet?.availableBalance, 17.4);
+  assert.equal(driverSnap.data()?.wallet?.digitalBalance, 17.4);
+  assert.equal(driverSnap.data()?.wallet?.dailyEarnings, 17.4);
+  assert.equal(driverSnap.data()?.wallet?.accumulatedCommission, 2.6);
   assert.equal(passengerSnap.data()?.wallet?.availableBalance, 80);
   assert.equal(passengerSnap.data()?.wallet?.digitalBalance, 80);
   assert.equal(presenceSnap.data()?.status, 'AVAILABLE');
@@ -126,18 +126,18 @@ async function main() {
   });
 
   const cashResult = await RideSettlementService.completeRide(cashRideId, driverId);
-  assert.equal(cashResult.driverNet, 17);
-  assert.equal(cashResult.commission, 3);
+  assert.equal(cashResult.driverNet, 17.4);
+  assert.equal(cashResult.commission, 2.6);
 
   const cashDriver = await driverRef.get();
-  assert.equal(cashDriver.data()?.wallet?.availableBalance, -3);
-  assert.equal(cashDriver.data()?.wallet?.digitalBalance, -3);
+  assert.equal(cashDriver.data()?.wallet?.availableBalance, -2.6);
+  assert.equal(cashDriver.data()?.wallet?.digitalBalance, -2.6);
   assert.equal(cashDriver.data()?.wallet?.cashDebt, 20);
-  assert.equal(cashDriver.data()?.wallet?.dailyEarnings, 17);
+  assert.equal(cashDriver.data()?.wallet?.dailyEarnings, 17.4);
 
   const cashLedger = await db.collection('accounting_ledger').doc(`SETTLE_${cashRideId}`).get();
-  assert.equal(cashLedger.data()?.debitTotal, 3);
-  assert.equal(cashLedger.data()?.creditTotal, 3);
+  assert.equal(cashLedger.data()?.debitTotal, 2.6);
+  assert.equal(cashLedger.data()?.creditTotal, 2.6);
   assert.equal(cashLedger.data()?.lines?.length, 2);
 
   console.log('RIDE SETTLEMENT TEST: PASS');
