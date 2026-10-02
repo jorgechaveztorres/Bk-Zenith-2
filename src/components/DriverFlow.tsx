@@ -15,6 +15,7 @@ import MapContainer from './MapContainer';
 import Chat from './Chat';
 import SOSButton from './SOSButton';
 import ShareRide from './ShareRide';
+import CallPhoneButton from './common/CallPhoneButton';
 import { MessageSquare } from 'lucide-react';
 import DriverVehicleScreen from './driver/DriverVehicleScreen';
 import DriverDocumentsScreen from './driver/DriverDocumentsScreen';
@@ -24,7 +25,7 @@ import DriverDashboard from './driver/DriverDashboard';
 import DriverActiveTripHUD from './driver/DriverActiveTripHUD';
 import TrackingMap from './maps/TrackingMap';
 import { DriverTrackingService } from '../services/DriverTrackingService';
-import { generateRideOtp } from '../utils/otpHelper';
+import { RideClientService } from '../services/RideClientService';
 import { 
   MapPin, 
   DollarSign, 
@@ -189,16 +190,10 @@ export default function DriverFlow({ user }: DriverFlowProps) {
   const acceptRideDirectly = async (ride: Ride) => {
     setLoading(true);
     try {
-      await setDoc(doc(db, 'rides', ride.id), {
-        status: RideStatus.DRIVER_ASSIGNED,
-        driverId: user.uid,
-        driverName: user.fullName,
-        finalPrice: ride.protectedPrice,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
+      await RideClientService.acceptRide(ride.id);
       await NotificationService.notifyRideAccepted(ride.passengerId, user.uid, ride.passengerName, user.fullName, ride.protectedPrice);
       setSelectedRide(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error("[ZENITH-ERROR] Direct acceptance failed:", error);
     } finally {
       setLoading(false);
@@ -209,20 +204,15 @@ export default function DriverFlow({ user }: DriverFlowProps) {
     if (!myAcceptedRide) return;
     setLoading(true);
     try {
-      await setDoc(doc(db, 'rides', myAcceptedRide.id), {
-        status,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
+      await RideClientService.updateRideStatus(myAcceptedRide.id, status);
 
-      if (status === RideStatus.IN_PROGRESS) {
-        await NotificationService.notifyRideStarted(myAcceptedRide.passengerId);
-      } else if (status === RideStatus.COMPLETED) {
+      if (status === RideStatus.COMPLETED) {
         const amount = myAcceptedRide.finalPrice || myAcceptedRide.suggestedPrice || 0;
-        await WalletService.creditRideEarnings(user.uid, amount, myAcceptedRide.id, myAcceptedRide.passengerName);
         await NotificationService.notifyRideCompleted(myAcceptedRide.passengerId, user.uid, amount);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("[ZENITH-ERROR] Failed to update ride status:", error);
+      alert(error.message || 'Error al actualizar estado.');
     } finally {
       setLoading(false);
     }
@@ -291,8 +281,15 @@ export default function DriverFlow({ user }: DriverFlowProps) {
           
           <div className="grid grid-cols-2 gap-8 relative z-10 border-b border-black/10 pb-4">
             <div className="space-y-1 text-left">
-              <p className="text-[10px] font-mono uppercase font-black opacity-60">Personal Objetivo</p>
+              <p className="text-[10px] font-mono uppercase font-black opacity-60">Personal Objetivo (Cliente)</p>
               <p className="text-2xl font-black italic">{myAcceptedRide.passengerName}</p>
+              <div className="pt-1">
+                <CallPhoneButton
+                  phone={myAcceptedRide.passengerPhone || (myAcceptedRide as any).solicitante?.phone}
+                  recipientLabel="Cliente"
+                  size="sm"
+                />
+              </div>
             </div>
             <div className="text-right space-y-1">
               <p className="text-[10px] font-mono uppercase font-black opacity-60">Compensación Acordada</p>
@@ -400,13 +397,17 @@ export default function DriverFlow({ user }: DriverFlowProps) {
                 />
                 <button
                   disabled={loading || otpInput.length < 3}
-                  onClick={() => {
-                    const expected = generateRideOtp(myAcceptedRide.id);
-                    if (otpInput === expected) {
-                      setOtpError(null);
-                      updateRideStatus(RideStatus.IN_PROGRESS);
-                    } else {
-                      setOtpError('Código de seguridad inválido. Verifique con el pasajero.');
+                  onClick={async () => {
+                    setLoading(true);
+                    setOtpError(null);
+                    try {
+                      await RideClientService.verifyOtp(myAcceptedRide.id, otpInput);
+                      await NotificationService.notifyRideStarted(myAcceptedRide.passengerId);
+                      setOtpInput('');
+                    } catch (err: any) {
+                      setOtpError(err.message || 'Código de seguridad inválido.');
+                    } finally {
+                      setLoading(false);
                     }
                   }}
                   className="flex-1 bg-[#39FF14] text-black font-black uppercase text-xs tracking-widest rounded-xl hover:shadow-glow transition-all py-3 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"

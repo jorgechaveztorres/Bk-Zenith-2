@@ -27,6 +27,10 @@ const STATUS_METADATA: Record<OperationStatus, { label: string; description: str
   ACTIVO: {
     label: 'Activo',
     description: 'En curso / desplazamiento'
+  },
+  FINALIZADO: {
+    label: 'Finalizado',
+    description: 'Entrega completada y cerrada'
   }
 };
 
@@ -48,7 +52,7 @@ export const OperationStatusStepper: React.FC<OperationStatusStepperProps> = ({
       </div>
 
       {/* Stepper horizontal responsivo */}
-      <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-1.5 sm:gap-2">
         {OPERATION_STATUS_FLOW.map((status, index) => {
           const isCompleted = index < currentIndex;
           const isCurrent = index === currentIndex;

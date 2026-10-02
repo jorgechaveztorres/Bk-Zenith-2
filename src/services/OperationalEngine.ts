@@ -9,6 +9,8 @@ import {
   increment
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import { PricingService } from './PricingService';
+import { RideClientService } from './RideClientService';
 import { 
   Ride, 
   RideStatus, 
@@ -472,43 +474,74 @@ export class OperationalEngine {
       throw new Error('La custodia del producto ha expirado.');
     }
 
-    const newRideData: Partial<Ride> = {
+    // 1. Cotizar ruta de recuperación mediante backend DPE V2
+    const originLocation = origRide.destination;
+    const destLocation = {
+      address: receptor.address,
+      lat: receptor.lat,
+      lng: receptor.lng
+    };
+
+    const quoteRes = await PricingService.requestQuote({
+      originLat: originLocation.lat,
+      originLng: originLocation.lng,
+      destLat: destLocation.lat,
+      destLng: destLocation.lng,
+      originAddress: originLocation.address,
+      destAddress: destLocation.address
+    });
+
+    const rawQuote = (quoteRes as any).rawQuote || {
+      quoteId: quoteRes.quoteId,
+      pricingVersion: 'DPE_V2',
+      totalFare: quoteRes.totalFare,
+      normalFare: quoteRes.normalFare || quoteRes.basePrice,
+      multiplier: quoteRes.multiplier,
+      distance: quoteRes.distance,
+      duration: quoteRes.duration,
+      origin: originLocation,
+      destination: destLocation,
+      currency: 'PEN',
+      expiresAt: quoteRes.expiresAt.toISOString(),
+      pricingSeal: quoteRes.seal
+    };
+
+    // 2. Crear documento protegido mediante Gatekeeper Server-Side
+    const rideResult = await RideClientService.requestRide({
+      quote: rawQuote,
       passengerId: solicitante.uid,
       passengerName: solicitante.name,
-      solicitante,
-      pagador,
+      passengerPhone: solicitante.phone || '',
+      paymentMethod: 'cash',
+      orderType: 'DELIVERY',
+      packageInfo: origRide.packageInfo,
       receptor,
-      driverId: origRide.driverId,
-      driverName: origRide.driverName,
-      motorizado: origRide.motorizado,
-      origin: origRide.destination, // Punto donde está el custodio o destino previo
-      destination: {
-        address: receptor.address,
-        lat: receptor.lat,
-        lng: receptor.lng
-      },
-      protectedPrice: fare,
-      pricingSeal: `ZENITH-REC-V1.1-${Date.now()}`,
-      pricingVersion: '2.0.1-enterprise',
+      pagador,
+      solicitante,
+      evidenceLevel: origRide.evidenceLevel || EvidenceLevel.E2_CONFIRMED,
+      idempotencyKey: `recovery_${originalRideId}_${Date.now()}`
+    });
+
+    // 3. Vincular datos de recuperación específicos al documento creado
+    const recoveryDocRef = doc(db, 'rides', rideResult.rideId);
+    await updateDoc(recoveryDocRef, {
+      driverId: origRide.driverId || null,
+      driverName: origRide.driverName || null,
+      motorizado: origRide.motorizado || null,
       status: RideStatus.DRIVER_ASSIGNED,
       solicitudeStatus: SolicitudeStatus.ASSIGNED,
       transitStatus: TransitStatus.IN_TRANSIT,
       deliveryStatus: DeliveryStatus.PENDING,
       custodyStatus: CustodyStatus.IN_TRANSIT_CUSTODY,
-      evidenceLevel: origRide.evidenceLevel || EvidenceLevel.E2_CONFIRMED,
-      packageInfo: origRide.packageInfo,
       deliveryOtp: this.generateDeliveryOtp(),
       deliveryOtpVerified: false,
       isRecoveryOrder: true,
       originalOperationId: originalRideId,
-      createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
-    };
-
-    const docRef = await addDoc(collection(db, 'rides'), newRideData);
+    });
 
     await this.recordEvent(
-      docRef.id,
+      rideResult.rideId,
       { role: 'SOLICITANTE', id: solicitante.uid, name: solicitante.name },
       'CREATE_RECOVERY_PEDIDO_2',
       `Pedido 2 de recuperación creado a partir de la operación ${originalRideId}. Prioridad 1 asignada al custodio.`,
@@ -517,7 +550,7 @@ export class OperationalEngine {
       { originalRideId }
     );
 
-    return docRef.id;
+    return rideResult.rideId;
   }
 
   /**

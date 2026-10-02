@@ -410,12 +410,14 @@ export default function ControlCenter({ user, onUserUpdate }: ControlCenterProps
     if (walletAmount <= 0) return;
     setSyncing(true);
     try {
-      const updatedWallet = await WalletService.depositFunds(user.uid, walletAmount, depositMethod);
-      onUserUpdate({ ...user, wallet: updatedWallet });
+      // Regla de Seguridad V1: El depósito arbitrario está deshabilitado.
+      // Las recargas deben originarse mediante solicitud verificada con código ZNTH.
+      const topup = await WalletService.createTopupRequest(walletAmount);
       setShowDepositModal(false);
-      triggerToast(`Depósito de $${walletAmount} procesado con éxito.`);
-    } catch (err) {
-      console.error("[ZENITH-ERROR] Deposit failed:", err);
+      triggerToast(`Solicitud de recarga ${topup.referenceCode} por S/ ${walletAmount} generada. Pendiente de verificación.`);
+    } catch (err: any) {
+      console.error("[ZENITH-ERROR] Deposit request failed:", err);
+      triggerToast(err.message || 'Error al procesar solicitud de recarga.');
     } finally {
       setSyncing(false);
     }

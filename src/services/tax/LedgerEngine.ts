@@ -1,4 +1,4 @@
-import { db } from '../../firebase/config';
+import { db, auth } from '../../firebase/config';
 import { collection, doc, setDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { LedgerEntry } from './TaxTypes';
 import { AuditEngine } from '../AuditEngine';
@@ -17,9 +17,19 @@ export class LedgerEngineClass {
     paymentMethod: string;
     status: string;
   }): Promise<string> {
+    const user = auth.currentUser;
+    if (!user) {
+      throw new Error("No se puede asentar en el libro contable sin una sesión autenticada.");
+    }
+
+    const idToken = await user.getIdToken();
+
     const res = await fetch('/api/ledger/record', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer DUMMY_TOKEN_UNTIL_AUTH_IS_WIRED_ON_FRONTEND` },
+      headers: { 
+        'Content-Type': 'application/json', 
+        'Authorization': `Bearer ${idToken}` 
+      },
       body: JSON.stringify(params)
     });
     

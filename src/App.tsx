@@ -555,7 +555,10 @@ export default function App() {
                 ) : activeModule === 'admin' ? (
                   <AdminDashboard adminUser={currentUser} />
                 ) : activeModule === 'heart_test' ? (
-                  <OperationalHeartTestView />
+                  <OperationalHeartTestView 
+                    onReturnHome={() => handleModuleChange('service')} 
+                    onClose={() => handleModuleChange('service')} 
+                  />
                 ) : (
                   <SimulationLab />
                 )}
@@ -574,7 +577,10 @@ export default function App() {
               className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-2xl p-2 sm:p-6 overflow-y-auto flex items-center justify-center"
             >
               <div className="w-full max-w-6xl my-auto">
-                <OperationalHeartTestView onClose={() => setShowHeartTestModal(false)} />
+                <OperationalHeartTestView 
+                  onClose={() => setShowHeartTestModal(false)} 
+                  onReturnHome={() => setShowHeartTestModal(false)} 
+                />
               </div>
             </motion.div>
           )}

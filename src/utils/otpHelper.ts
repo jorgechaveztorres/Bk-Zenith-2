@@ -6,15 +6,11 @@
 // ============================================================================
 
 /**
- * Generates a deterministic 3-digit OTP code based on a unique ride ID.
- * This guarantees both passenger and driver can verify the security code
- * offline/zero-latency in perfect sync, without database read/write costs.
+ * @deprecated EL OTP DETERMINISTA EN CLIENTE HA SIDO DESMANTELADO PERMANENTEMENTE (FASE 3.2).
+ * La generación y verificación de OTP es ahora 100% criptográfica y server-side.
+ * Esta función se mantiene únicamente por compatibilidad de tipos legados y no tiene validez operativa.
  */
-export function generateRideOtp(rideId: string): string {
-  if (!rideId) return '000';
-  let num = 0;
-  for (let i = 0; i < rideId.length; i++) {
-    num += rideId.charCodeAt(i);
-  }
-  return ((num % 900) + 100).toString(); // Always a 3-digit number between 100 and 999
+export function generateRideOtp(_rideId: string): string {
+  console.warn('[SECURITY_DEPRECATION] generateRideOtp está deprecado. El OTP es validado exclusivamente por el Backend Gatekeeper.');
+  return '---';
 }

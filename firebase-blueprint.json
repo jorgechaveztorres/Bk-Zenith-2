@@ -61,6 +61,39 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["rideId", "driverId", "price", "status"]
+    },
+    "TopupRequest": {
+      "title": "Wallet Topup Request",
+      "description": "A pilot Yape topup request for driver pre-paid wallet",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "referenceCode": { "type": "string" },
+        "driverId": { "type": "string" },
+        "driverName": { "type": "string" },
+        "requestedAmount": { "type": "number" },
+        "verifiedAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["CREATED", "RECEIPT_SUBMITTED", "EXTRACTED_BY_AI", "RECONCILING", "VERIFIED", "REVIEW", "REJECTED", "CREDITED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "referenceCode", "driverId", "requestedAmount", "status"]
+    },
+    "BankMovement": {
+      "title": "Confirmed Bank Movement",
+      "description": "Operator confirmed physical reception in Yape account",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "source": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "payerName": { "type": "string" },
+        "operatorId": { "type": "string" },
+        "status": { "type": "string", "enum": ["UNCLAIMED", "MATCHED", "DISPUTED"] }
+      },
+      "required": ["id", "amount", "date", "payerName", "operatorId", "status"]
     }
   },
   "firestore": {
@@ -75,6 +108,14 @@
     "/rides/{rideId}/offers/{offerId}": {
       "schema": "Offer",
       "description": "Operator bids for specific operations"
+    },
+    "/topup_requests/{topupId}": {
+      "schema": "TopupRequest",
+      "description": "Pilot Yape topup requests with immutable audit trail"
+    },
+    "/bank_movements/{movementId}": {
+      "schema": "BankMovement",
+      "description": "Operator verified bank incoming movements"
     }
   }
 }

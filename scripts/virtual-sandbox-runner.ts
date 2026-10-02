@@ -16,12 +16,61 @@ process.env.VITE_FIRESTORE_EMULATOR_HOST = process.env.VITE_FIRESTORE_EMULATOR_H
 process.env.VITE_FIRESTORE_EMULATOR_PORT = process.env.VITE_FIRESTORE_EMULATOR_PORT || '8080';
 process.env.VITE_AUTH_EMULATOR_URL = process.env.VITE_AUTH_EMULATOR_URL || 'http://127.0.0.1:9099';
 
-// Asegurar compatibilidad con import.meta.env en entorno Node sin Vite bundler si aplica
-if (typeof globalThis !== 'undefined') {
-  const g = globalThis as Record<string, unknown>;
-  if (!g.import) {
-    g.import = { meta: { env: process.env } };
+// Asegurar compatibilidad con import.meta.env y persistencia en memoria para Node.js / tsx
+const memoryStorage = new Map<string, string>();
+
+const localStorageShim = {
+  getItem: (key: string): string | null => memoryStorage.get(key) ?? null,
+  setItem: (key: string, value: string): void => {
+    memoryStorage.set(key, String(value));
+  },
+  removeItem: (key: string): void => {
+    memoryStorage.delete(key);
+  },
+  clear: (): void => {
+    memoryStorage.clear();
+  },
+  get length(): number {
+    return memoryStorage.size;
+  },
+  key: (index: number): string | null => {
+    return Array.from(memoryStorage.keys())[index] ?? null;
   }
+};
+
+const windowShim: Record<string, unknown> = {
+  localStorage: localStorageShim,
+  dispatchEvent: (_event: unknown): boolean => true,
+  addEventListener: (_type: string, _listener: unknown): void => {},
+  removeEventListener: (_type: string, _listener: unknown): void => {}
+};
+
+const g = globalThis as Record<string, unknown>;
+if (!g.import) {
+  g.import = { meta: { env: process.env } };
+}
+
+if (typeof g.window === 'undefined') {
+  g.window = windowShim;
+} else {
+  const win = g.window as Record<string, unknown>;
+  win.localStorage = win.localStorage || localStorageShim;
+  win.dispatchEvent = win.dispatchEvent || windowShim.dispatchEvent;
+}
+
+if (typeof g.localStorage === 'undefined') {
+  g.localStorage = localStorageShim;
+}
+
+if (typeof g.CustomEvent === 'undefined') {
+  g.CustomEvent = class CustomEvent {
+    type: string;
+    detail: unknown;
+    constructor(type: string, params?: { detail?: unknown }) {
+      this.type = type;
+      this.detail = params?.detail;
+    }
+  };
 }
 
 /**

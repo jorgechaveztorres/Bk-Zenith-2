@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ZenithOperationTimeline from './ZenithOperationTimeline';
+import CallPhoneButton from '../common/CallPhoneButton';
 
 interface ZenithActiveOperationHUDProps {
   ride: Ride;
@@ -278,15 +279,11 @@ export default function ZenithActiveOperationHUD({
                 </p>
               </div>
             </div>
-            {ride.motorizado?.phone && (
-              <a
-                href={`tel:${ride.motorizado.phone}`}
-                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-[#39FF14]/20 text-white hover:text-[#39FF14] text-xs font-mono font-bold flex items-center gap-1.5 transition-all"
-              >
-                <Phone size={12} />
-                Llamar
-              </a>
-            )}
+            <CallPhoneButton
+              phone={ride.driverPhone || ride.motorizado?.phone}
+              recipientLabel="Motorizado"
+              size="sm"
+            />
           </div>
         ) : (
           <div className="p-3.5 bg-white/5 border border-dashed border-white/10 rounded-2xl flex items-center gap-3 text-gray-400 text-xs font-mono">

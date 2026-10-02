@@ -1,6 +1,7 @@
 import { doc, setDoc, getDoc, deleteDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { DocumentStatus, User } from '../types';
+import { resolveMarketZone } from '../utils/pricingEngine';
 
 export interface DriverOnlineStatus {
   driverId: string;
@@ -24,6 +25,9 @@ export interface DriverOnlineStatus {
   isBlocked: boolean;
   documentStatus: DocumentStatus;
   rating: number;
+  city?: string;
+  marketZoneId?: string;
+  gridKey?: string;
 }
 
 export class DriverPresenceService {
@@ -87,6 +91,9 @@ export class DriverPresenceService {
     }
 
     // Si pasa todos los filtros de validación Zero-Trust, se registra en drivers_online
+    const marketZone = resolveMarketZone(params.lat, params.lng);
+    const resolvedCity = userData.city || marketZone.city;
+
     const presenceData: DriverOnlineStatus = {
       driverId: user.uid,
       fullName: userData.fullName || 'Operador Zenith',
@@ -108,7 +115,10 @@ export class DriverPresenceService {
       licenseExpiry: docData.licenseExpiry,
       isBlocked,
       documentStatus,
-      rating: userData.driverProfile?.rating || userData.rating || 5.0
+      rating: userData.driverProfile?.rating || userData.rating || 5.0,
+      city: resolvedCity,
+      marketZoneId: marketZone.id,
+      gridKey: marketZone.gridKey
     };
 
     await setDoc(doc(db, this.collectionName, user.uid), presenceData);
@@ -159,6 +169,8 @@ export class DriverPresenceService {
     const snap = await getDoc(docRef);
     if (!snap.exists()) return;
 
+    const marketZone = resolveMarketZone(params.lat, params.lng);
+
     await updateDoc(docRef, {
       lat: params.lat,
       lng: params.lng,
@@ -168,7 +180,10 @@ export class DriverPresenceService {
       isBatteryCritical: params.batteryLevel < 0.20,
       hasInternet: params.hasInternet,
       isGpsActive: params.isGpsActive,
-      lastActive: serverTimestamp()
+      lastActive: serverTimestamp(),
+      city: marketZone.city,
+      marketZoneId: marketZone.id,
+      gridKey: marketZone.gridKey
     });
 
     // Sincronizar espejo en el perfil de usuario general

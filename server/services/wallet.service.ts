@@ -164,36 +164,162 @@ export const WalletService = {
     }
   },
 
-  // Record Deposit
-  depositFunds: async (userId: string, amount: number, method: string) => {
+  // Record Deposit - DEPRECADO PERMANENTEMENTE POR SEGURIDAD
+  depositFunds: async (_userId: string, _amount: number, _method: string) => {
+    throw new Error("DEPRECATED: El depósito arbitrario ha sido deshabilitado permanentemente. Utilice el flujo de recargas verificadas /api/topups.");
+  },
+
+  // Acreditación Atómica de Recarga Verificada (V1 - Yape Personal)
+  creditVerifiedTopup: async (topupId: string, operatorId: string) => {
     if (!db) throw new Error("Base de datos no disponible.");
-    const userDocRef = db.collection('users').doc(userId);
-    const snap = await userDocRef.get();
-    if (!snap.exists) throw new Error("User profile not found");
 
-    const userData = snap.data();
-    const currentWallet = userData?.wallet;
+    return await db.runTransaction(async (transaction) => {
+      // 1. Leer topup
+      const topupRef = db.collection('topup_requests').doc(topupId);
+      const topupSnap = await transaction.get(topupRef);
+      if (!topupSnap.exists) {
+        throw new Error(`RECARGA_NO_ENCONTRADA: La solicitud ${topupId} no existe.`);
+      }
 
-    const newMov = {
-      id: `mov_dep_${Date.now()}`,
-      type: 'deposit',
-      amount: amount,
-      description: `Depósito centralizado vía ${method}`,
-      createdAt: Timestamp.now()
-    };
+      const topupData = topupSnap.data() as any;
 
-    const updatedWallet = {
-      ...currentWallet,
-      availableBalance: Number((currentWallet.availableBalance + amount).toFixed(2)),
-      digitalBalance: currentWallet.digitalBalance !== undefined ? Number((currentWallet.digitalBalance + amount).toFixed(2)) : Number((currentWallet.availableBalance + amount).toFixed(2)),
-      movements: [newMov, ...(currentWallet.movements || [])]
-    };
+      // 2. Confirmar status === VERIFIED
+      if (topupData.status !== 'VERIFIED') {
+        throw new Error(`ESTADO_INVALIDO: Solo se pueden acreditar recargas en estado VERIFIED. Estado actual: ${topupData.status}`);
+      }
 
-    await userDocRef.update({
-      wallet: updatedWallet
+      // 3. Confirmar que no esté CREDITED
+      if (topupData.status === 'CREDITED' || topupData.creditedAt) {
+        throw new Error(`IDEMPOTENCIA: La recarga ${topupId} ya fue acreditada previamente.`);
+      }
+
+      // Validar monto a acreditar
+      const verifiedAmount = Number((topupData.verifiedAmount ?? topupData.requestedAmount).toFixed(2));
+      if (verifiedAmount <= 0) {
+        throw new Error(`MONTO_INVALIDO: El monto a acreditar debe ser mayor a 0.`);
+      }
+
+      // 4. Confirmar que el movimiento no haya sido utilizado anteriormente
+      const movementFingerprint = topupData.reconciliation?.matchedMovementId || `FPR-${topupData.id}`;
+      const processedRef = db.collection('processed_bank_movements').doc(movementFingerprint);
+      const processedSnap = await transaction.get(processedRef);
+      if (processedSnap.exists) {
+        throw new Error(`MOVIMIENTO_REUTILIZADO: El movimiento bancario ${movementFingerprint} ya fue procesado en la recarga ${processedSnap.data()?.topupId}.`);
+      }
+
+      // 5. Leer Wallet actual del conductor
+      const driverId = topupData.driverId;
+      const userRef = db.collection('users').doc(driverId);
+      const userSnap = await transaction.get(userRef);
+      if (!userSnap.exists) {
+        throw new Error(`CONDUCTOR_NO_ENCONTRADO: El perfil del conductor ${driverId} no existe.`);
+      }
+
+      const userData = userSnap.data();
+      const currentWallet = userData?.wallet || {
+        availableBalance: 0,
+        retainedBalance: 0,
+        movements: []
+      };
+
+      const currentBalance = Number((currentWallet.availableBalance || 0).toFixed(2));
+      const newAvailableBalance = Number((currentBalance + verifiedAmount).toFixed(2));
+
+      // 6 & 7. Registrar movimiento de Wallet
+      const txId = `WTX-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      const newMov = {
+        id: txId,
+        type: 'topup_yape',
+        amount: verifiedAmount,
+        description: `Recarga verificada vía Yape (${topupData.referenceCode})`,
+        createdAt: Timestamp.now(),
+        referenceId: topupId
+      };
+
+      const updatedWallet = {
+        ...currentWallet,
+        availableBalance: newAvailableBalance,
+        digitalBalance: newAvailableBalance,
+        updatedAt: FieldValue.serverTimestamp(),
+        movements: [newMov, ...(currentWallet.movements || []).slice(0, 49)]
+      };
+
+      // 8. Registrar processed_bank_movement
+      transaction.set(processedRef, {
+        movementFingerprint,
+        topupId,
+        referenceCode: topupData.referenceCode,
+        driverId,
+        amount: verifiedAmount,
+        operatorId,
+        creditedAt: FieldValue.serverTimestamp()
+      });
+
+      // 9 & 10. Cambiar topup a CREDITED y guardar timestamp y referencia de transacción
+      const creditedTimestamp = new Date().toISOString();
+      const newAuditEntry = {
+        fromStatus: 'VERIFIED',
+        toStatus: 'CREDITED',
+        timestamp: creditedTimestamp,
+        actorId: operatorId,
+        actorRole: 'operator',
+        reason: 'Acreditación atómica de saldo completada con éxito',
+        metadata: {
+          verifiedAmount,
+          txId,
+          previousBalance: currentBalance,
+          newBalance: newAvailableBalance
+        }
+      };
+
+      transaction.update(topupRef, {
+        status: 'CREDITED',
+        creditedAt: creditedTimestamp,
+        creditedTxId: txId,
+        finalBalanceSnapshot: newAvailableBalance,
+        updatedAt: creditedTimestamp,
+        auditHistory: FieldValue.arrayUnion(newAuditEntry)
+      });
+
+      // Actualizar balance en el usuario
+      transaction.update(userRef, {
+        wallet: updatedWallet
+      });
+
+      // Registrar también en wallets/{driverId}/movements/{txId} para escalabilidad
+      const standaloneMovRef = db.collection('wallets').doc(driverId).collection('movements').doc(txId);
+      transaction.set(standaloneMovRef, {
+        ...newMov,
+        topupId,
+        referenceCode: topupData.referenceCode,
+        creditedBy: operatorId,
+        createdAt: FieldValue.serverTimestamp()
+      });
+
+      // Registrar asiento contable en accounting_ledger
+      const ledgerRef = db.collection('accounting_ledger').doc(txId);
+      transaction.set(ledgerRef, {
+        id: txId,
+        type: 'WALLET_TOPUP_CREDIT',
+        debitAccount: 'ACTIVO_BANCO_YAPE_ZENITH',
+        creditAccount: 'PASIVO_WALLET_MOTORIZADO',
+        amount: verifiedAmount,
+        driverId,
+        referenceCode: topupData.referenceCode,
+        topupId,
+        operatorId,
+        createdAt: FieldValue.serverTimestamp()
+      });
+
+      return {
+        success: true,
+        topupId,
+        txId,
+        driverId,
+        creditedAmount: verifiedAmount,
+        newBalance: newAvailableBalance
+      };
     });
-
-    return updatedWallet;
   },
 
   // Record Withdrawal

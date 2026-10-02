@@ -1,6 +1,5 @@
 import { LoggingService } from './LoggingService';
-import { db } from '../firebase/config';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { auth } from '../firebase/config';
 import { ObservabilityService } from './ObservabilityService';
 
 export interface InAppNotificationData {
@@ -8,6 +7,7 @@ export interface InAppNotificationData {
   title: string;
   message: string;
   type: 'info' | 'success' | 'alert' | 'promo';
+  rideId?: string;
 }
 
 export interface INotificationEngine {
@@ -18,7 +18,7 @@ export interface INotificationEngine {
 export class NotificationEngineClass implements INotificationEngine {
   
   /**
-   * Envía una notificación en tiempo real guardándola en la subcolección del usuario en Firestore.
+   * Envía una notificación en tiempo real despachándola a través del backend seguro con Server-Authority.
    */
   async sendInAppNotification(data: InAppNotificationData): Promise<boolean> {
     if (!data.userId) {
@@ -26,21 +26,40 @@ export class NotificationEngineClass implements INotificationEngine {
       return false;
     }
 
-    try {
-      LoggingService.info('NOTIFICATION_ENGINE', `Despachando notificación [${data.type}] para el usuario ${data.userId}`);
+    const user = auth.currentUser;
+    if (!user) {
+      LoggingService.warn('NOTIFICATION_ENGINE', 'Intento de enviar notificación sin sesión autenticada activa.');
+      return false;
+    }
 
-      const notifRef = collection(db, 'users', data.userId, 'notifications');
-      await addDoc(notifRef, {
-        title: data.title,
-        message: data.message,
-        type: data.type,
-        read: false,
-        createdAt: serverTimestamp()
+    try {
+      LoggingService.info('NOTIFICATION_ENGINE', `Despachando notificación [${data.type}] para el usuario ${data.userId} vía Backend`);
+
+      const idToken = await user.getIdToken();
+
+      const response = await fetch('/api/notifications/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          recipientUserId: data.userId,
+          title: data.title,
+          message: data.message,
+          type: data.type,
+          rideId: data.rideId
+        })
       });
+
+      if (!response.ok) {
+        const errPayload = await response.json().catch(() => ({}));
+        throw new Error(errPayload.message || `Fallo al despachar notificación en backend (HTTP ${response.status})`);
+      }
 
       // Rastrear escritura en la telemetría
       ObservabilityService.trackFirestoreWrite();
-      LoggingService.info('NOTIFICATION_ENGINE', `Notificación guardada en Firestore para usuario: ${data.userId}`);
+      LoggingService.info('NOTIFICATION_ENGINE', `Notificación despachada con éxito vía backend para usuario: ${data.userId}`);
       return true;
     } catch (error) {
       LoggingService.error('NOTIFICATION_ENGINE', `Error al enviar notificación en la app a ${data.userId}`, error);

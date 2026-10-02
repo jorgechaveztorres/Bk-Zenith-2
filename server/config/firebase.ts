@@ -1,20 +1,31 @@
-import { initializeApp, cert, getApps } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
-import { getAuth } from 'firebase-admin/auth';
+import { initializeApp, cert, getApps, App } from 'firebase-admin/app';
+import { getFirestore, Firestore } from 'firebase-admin/firestore';
+import { getAuth, Auth } from 'firebase-admin/auth';
+import firebaseConfig from '../../firebase-applet-config.json';
+
+let adminApp: App;
 
 try {
   if (getApps().length === 0) {
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-      initializeApp({
-        credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))
+      adminApp = initializeApp({
+        credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)),
+        projectId: firebaseConfig.projectId
       });
     } else {
-      initializeApp();
+      adminApp = initializeApp({
+        projectId: firebaseConfig.projectId
+      });
     }
+  } else {
+    adminApp = getApps()[0];
   }
-} catch (e) {
-  console.log('Firebase admin already initialized or missing credentials');
+} catch (e: any) {
+  console.error('[FIREBASE_ADMIN_INIT_ERROR] Error inicializando Firebase Admin:', e.message);
+  adminApp = getApps()[0];
 }
 
-export const db = getFirestore();
-export const auth = getAuth();
+// Inicializar Firestore apuntando explícitamente a la base de datos nombrada y Auth al proyecto configurado
+export const db: Firestore = getFirestore(adminApp, firebaseConfig.firestoreDatabaseId);
+export const auth: Auth = getAuth(adminApp);
+

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { APIProvider, Map, AdvancedMarker, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
 import { MapPin, Navigation } from 'lucide-react';
+import ZenithImperialEagleMarker from './maps/ZenithImperialEagleMarker';
 import { PERU_NEUTRAL_CENTER, getLastKnownLocation } from '../services/geoContextService';
 
 export const API_KEY = (
@@ -296,26 +297,33 @@ export default function MapContainer({
         >
           {!hasRoute && <ViewportEngineV2 center={effectiveCenter} markers={markers} />}
           <MapRenderTracer markers={markers} polylinePointsCount={polylinePointsCount} />
-          {markers.map(marker => (
-            <AdvancedMarker key={marker.id} position={marker.position} title={marker.title}>
-              <div className="relative flex items-center justify-center">
-                {/* Tactical radar pulse underlay */}
-                <div className={`absolute -inset-1 rounded-full blur-md opacity-60 ${
-                  marker.id === 'origin' ? 'bg-[#39FF14]' : 'bg-white'
-                }`}></div>
-                {/* Main pin body */}
-                <div className={`w-8 h-8 rounded-full border border-white/20 flex items-center justify-center shadow-lg relative z-10 transition-transform hover:scale-110 ${
-                  marker.id === 'origin' ? 'bg-[#39FF14] text-black' : 'bg-black text-[#39FF14]'
-                }`}>
-                  {marker.id === 'origin' ? (
-                    <MapPin size={16} className="stroke-[2.5]" />
-                  ) : (
-                    <Navigation size={14} className="stroke-[2.5] rotate-45" />
-                  )}
-                </div>
-              </div>
-            </AdvancedMarker>
-          ))}
+          {markers.map(marker => {
+            const isVehicleMarker = marker.id === 'vehicle' || marker.id === 'driver' || marker.id === 'motorizado';
+            return (
+              <AdvancedMarker key={marker.id} position={marker.position} title={marker.title}>
+                {isVehicleMarker ? (
+                  <ZenithImperialEagleMarker size={44} title={marker.title || 'Unidad Zénith'} />
+                ) : (
+                  <div className="relative flex items-center justify-center">
+                    {/* Tactical radar pulse underlay */}
+                    <div className={`absolute -inset-1 rounded-full blur-md opacity-60 ${
+                      marker.id === 'origin' ? 'bg-[#39FF14]' : 'bg-white'
+                    }`}></div>
+                    {/* Main pin body */}
+                    <div className={`w-8 h-8 rounded-full border border-white/20 flex items-center justify-center shadow-lg relative z-10 transition-transform hover:scale-110 ${
+                      marker.id === 'origin' ? 'bg-[#39FF14] text-black' : 'bg-black text-[#39FF14]'
+                    }`}>
+                      {marker.id === 'origin' ? (
+                        <MapPin size={16} className="stroke-[2.5]" />
+                      ) : (
+                        <Navigation size={14} className="stroke-[2.5] rotate-45" />
+                      )}
+                    </div>
+                  </div>
+                )}
+              </AdvancedMarker>
+            );
+          })}
 
           {hasRoute && (
             <RouteDisplay origin={originMarker.position} destination={destMarker.position} onRouteLoaded={setPolylinePointsCount} />

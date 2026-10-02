@@ -8,7 +8,6 @@
 import React from 'react';
 import { Ride, RideStatus } from '../types';
 import { Clock, Shield, AlertTriangle, Zap, CheckCircle2, Compass, Activity, MapPin, KeyRound } from 'lucide-react';
-import { generateRideOtp } from '../utils/otpHelper';
 
 interface PassengerActiveTripHUDProps {
   ride: Ride;
@@ -208,7 +207,7 @@ export default function PassengerActiveTripHUD({ ride }: PassengerActiveTripHUDP
           <div className="bg-black/80 border border-white/10 px-8 py-4 rounded-2xl flex flex-col items-center justify-center shadow-2xl shrink-0">
             <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest mb-1">CÓDIGO OTP</span>
             <span className="text-3xl font-black text-[#39FF14] tracking-[0.2em] font-mono pl-[0.2em]">
-              {generateRideOtp(ride.id)}
+              {(ride as any).passengerOtp || (ride as any).otpCode || '---'}
             </span>
           </div>
         </div>

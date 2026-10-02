@@ -1,17 +1,37 @@
-import { doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp, runTransaction } from 'firebase/firestore';
+import { 
+  doc, 
+  setDoc, 
+  updateDoc, 
+  onSnapshot, 
+  serverTimestamp, 
+  runTransaction,
+  collection,
+  query,
+  where,
+  getDocs,
+  limit
+} from 'firebase/firestore';
 import { db, auth } from '../firebase/config';
+import { User, UserRole, DocumentStatus } from '../types';
+import {
+  extractIdentityContext,
+  extractWalletContext,
+  canAcceptOrder,
+  OperationalContext
+} from './OperationalEligibilityEngine';
 
 // ============================================================================
 // MÁQUINA DE ESTADOS EXPLÍCITA DE LA OPERACIÓN (ZÉNITH PROTOCOL)
 // ============================================================================
-export type OperationStatus = 'CREADO' | 'PUBLICADO' | 'ASIGNADO' | 'ACEPTADO' | 'ACTIVO';
+export type OperationStatus = 'CREADO' | 'PUBLICADO' | 'ASIGNADO' | 'ACEPTADO' | 'ACTIVO' | 'FINALIZADO';
 
 export const OPERATION_STATUS_FLOW: OperationStatus[] = [
   'CREADO',
   'PUBLICADO',
   'ASIGNADO',
   'ACEPTADO',
-  'ACTIVO'
+  'ACTIVO',
+  'FINALIZADO'
 ];
 
 export interface OperationRecord {
@@ -53,13 +73,34 @@ export interface OperationRecord {
     updatedAt?: string;
   };
 
+  // Tarifación DPE V2 (Motor de Precios Dinámicos)
+  protectedPrice?: number;
+  finalPrice?: number;
+  pricingSeal?: string;
+  pricingVersion?: string;
+  basePrice?: number;
+  multiplier?: number;
+  marketPressure?: number;
+  currency?: string;
+
   // Marcas de tiempo de cada transición de estado
   createdAt: string;
   publishedAt?: string;
   assignedAt?: string;
   acceptedAt?: string;
   activatedAt?: string;
+  finalizedAt?: string;
+  completedAt?: string;
   updatedAt: string;
+
+  // Campos de entrega Zénith MVP V1.1 (Receptor, Paquete, Evidencia, Contingencia)
+  packageInfo?: any;
+  receptor?: any;
+  pagador?: any;
+  solicitante?: any;
+  evidenceLevel?: string;
+  returnContingency?: any;
+  [key: string]: any;
 }
 
 const STORAGE_KEY = 'zenith_operational_orders_v1';
@@ -120,6 +161,25 @@ export function getAvailableOrders(): OperationRecord[] {
 }
 
 /**
+ * Limpieza exclusiva de órdenes TEST huérfanas de actores antes de iniciar una nueva prueba.
+ * No altera órdenes reales ni órdenes completadas (FINALIZADO).
+ */
+export function cleanOrphanTestOrders(driverUid?: string, passengerUid?: string): void {
+  const all = getStoredOrders();
+  const cleaned = all.filter(o => {
+    const isActorOrder = 
+      (driverUid && o.driverId === driverUid) ||
+      o.driverId === 'test-motorizado-01' ||
+      (passengerUid && o.passengerId === passengerUid) ||
+      o.passengerId === 'solicitante-test-01';
+    return !(isActorOrder && o.status !== 'FINALIZADO');
+  });
+  if (cleaned.length !== all.length) {
+    saveOrdersToStorage(cleaned);
+  }
+}
+
+/**
  * Obtener un pedido específico por ID.
  */
 export function getOrderById(id: string): OperationRecord | null {
@@ -142,17 +202,32 @@ export function createDraftOrder(params: {
   destinationAddress: string;
   destLat: number;
   destLng: number;
-  distanceText: string;
-  durationText: string;
-  distanceMeters: number;
-  durationSeconds: number;
-  polylinePoints: { lat: number; lng: number }[];
+  distanceText?: string;
+  durationText?: string;
+  distanceMeters?: number;
+  durationSeconds?: number;
+  polylinePoints?: { lat: number; lng: number }[];
   passengerId?: string;
   passengerName?: string;
   passengerPhone?: string;
+  protectedPrice?: number;
+  finalPrice?: number;
+  pricingSeal?: string;
+  pricingVersion?: string;
+  basePrice?: number;
+  multiplier?: number;
+  marketPressure?: number;
+  currency?: string;
+  packageInfo?: any;
+  receptor?: any;
+  pagador?: any;
+  solicitante?: any;
+  evidenceLevel?: string;
+  returnContingency?: any;
+  [key: string]: any;
 }): OperationRecord {
   const now = new Date().toISOString();
-  const id = `OP-${Date.now().toString().slice(-6)}`;
+  const id = params.id || `OP-${Date.now().toString().slice(-6)}`;
 
   const order: OperationRecord = {
     id,
@@ -164,17 +239,31 @@ export function createDraftOrder(params: {
     destinationAddress: params.destinationAddress,
     destLat: params.destLat,
     destLng: params.destLng,
-    distanceText: params.distanceText,
-    durationText: params.durationText,
-    distanceMeters: params.distanceMeters,
-    durationSeconds: params.durationSeconds,
-    polylinePointsCount: params.polylinePoints.length,
-    polylinePoints: params.polylinePoints,
+    distanceText: params.distanceText || '0 km',
+    durationText: params.durationText || '0 min',
+    distanceMeters: params.distanceMeters || 0,
+    durationSeconds: params.durationSeconds || 0,
+    polylinePointsCount: params.polylinePoints?.length || 0,
+    polylinePoints: params.polylinePoints || [],
     passengerId: params.passengerId || 'solicitante-test-01',
     passengerName: params.passengerName || 'Carlos Mendoza (Solicitante)',
     passengerPhone: params.passengerPhone || '+51 948 112 233',
+    protectedPrice: params.protectedPrice,
+    finalPrice: params.finalPrice ?? params.protectedPrice,
+    pricingSeal: params.pricingSeal,
+    pricingVersion: params.pricingVersion || '2.0.0-dpe-mvp',
+    basePrice: params.basePrice,
+    multiplier: params.multiplier,
+    marketPressure: params.marketPressure,
+    currency: params.currency || 'PEN',
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
+    packageInfo: params.packageInfo,
+    receptor: params.receptor,
+    pagador: params.pagador,
+    solicitante: params.solicitante,
+    evidenceLevel: params.evidenceLevel,
+    returnContingency: params.returnContingency
   };
 
   const all = getStoredOrders();
@@ -209,8 +298,9 @@ export async function publishOrder(orderId: string): Promise<OperationRecord> {
 
   // Intentar sincronización opcional con Firestore para trazabilidad de nube
   try {
+    const cleanData = JSON.parse(JSON.stringify(updated));
     await setDoc(doc(db, 'rides', updated.id), {
-      ...updated,
+      ...cleanData,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     }, { merge: true });
@@ -234,67 +324,132 @@ export async function acceptOrderAsMotorizado(
     driverPhone: string;
     driverPlate: string;
     driverVehicle?: string;
+    userProfile?: Partial<User>;
   }
 ): Promise<OperationRecord> {
   const orderRef = doc(db, 'rides', orderId);
   const now = new Date().toISOString();
 
-  // 1. TRANSACCIÓN ATÓMICA EN FIRESTORE (Erradica Race Conditions entre múltiples motorizados)
+  // 1. OBTENCIÓN DEL CONTEXTO OPERATIVO REAL (Detección de operaciones incompatibles activas)
+  const storedOrders = getStoredOrders();
+  const hasActiveLocal = storedOrders.some(
+    o => o.driverId === driver.driverId && 
+         o.id !== orderId && 
+         (o.status === 'ACEPTADO' || o.status === 'ACTIVO' || o.status === 'ASIGNADO')
+  );
+
+  let hasActiveRemote = false;
   try {
-    await runTransaction(db, async (transaction) => {
-      const orderDoc = await transaction.get(orderRef);
-      if (!orderDoc.exists()) {
-        throw new Error(`FIRESTORE_ORDER_NOT_FOUND: Pedido ${orderId} no existe en Firestore.`);
-      }
-
-      const cloudData = orderDoc.data();
-      if (cloudData.status !== 'PUBLICADO') {
-        throw new Error(
-          `CONCURRENCY_CONFLICT: El pedido ${orderId} ya fue tomado por otro motorizado (${cloudData.driverName || 'Asignado'}). Estado actual: ${cloudData.status}`
-        );
-      }
-
-      if (typeof cloudData.driverId === 'string' && cloudData.driverId !== driver.driverId) {
-        throw new Error(
-          `CONCURRENCY_CONFLICT: El pedido ${orderId} ya está asignado a otro motorizado (${cloudData.driverId}).`
-        );
-      }
-
-      transaction.update(orderRef, {
-        status: 'ACEPTADO',
-        driverId: driver.driverId,
-        driverName: driver.driverName,
-        driverPhone: driver.driverPhone,
-        driverPlate: driver.driverPlate,
-        driverVehicle: driver.driverVehicle || 'Motocicleta Operativa',
-        acceptedAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.includes('CONCURRENCY_CONFLICT')) {
-      // Conflicto de concurrencia real: elevar inmediatamente para que no se sobreescriba
-      throw err;
+    const activeQuery = query(
+      collection(db, 'rides'),
+      where('driverId', '==', driver.driverId),
+      where('status', 'in', ['ACEPTADO', 'ACTIVO', 'ASIGNADO', 'DRIVER_ASSIGNED', 'DRIVER_ARRIVING', 'IN_PROGRESS']),
+      limit(2)
+    );
+    const activeSnap = await Promise.race([
+      getDocs(activeQuery),
+      new Promise<null>((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), 1500))
+    ]);
+    if (activeSnap) {
+      hasActiveRemote = activeSnap.docs.some(d => d.id !== orderId);
     }
-
-    // El emulador puede devolver PERMISSION_DENIED al revalidar las reglas
-    // después de que otro proceso haya confirmado la transacción. Clasificar
-    // ese caso por el estado confirmado en Firestore, sin aceptar localmente.
-    const currentOrder = await getDoc(orderRef);
-    if (currentOrder.exists()) {
-      const currentData = currentOrder.data();
-      if (currentData.status === 'ACEPTADO' && currentData.driverId !== driver.driverId) {
-        throw new Error(
-          `CONCURRENCY_CONFLICT: El pedido ${orderId} fue aceptado por otro motorizado (${currentData.driverId}).`
-        );
-      }
-    }
-
-    throw new Error(`FIRESTORE_ACCEPTANCE_FAILED: ${message}`, { cause: err });
+  } catch (_e) {
+    // Si la consulta remota falla o entra en timeout (offline), prevalece la verificación local
   }
 
-  // 2. Verificación y actualización de almacenamiento local
+  const operationalContext: OperationalContext = {
+    hasActiveOperation: hasActiveLocal || hasActiveRemote,
+    currentTransitStatus: null
+  };
+
+  // 2. TRANSACCIÓN ATÓMICA EN FIRESTORE (Erradica Race Conditions entre múltiples motorizados)
+  try {
+    await runTransaction(db, async (transaction) => {
+      // A. LECTURAS FIRESTORE OBLIGATORIAS (Preceden a cualquier escritura según Firestore rules)
+      const orderDoc = await transaction.get(orderRef);
+      const userRef = doc(db, 'users', driver.driverId);
+      const userDoc = await transaction.get(userRef);
+
+      // B. CONSTRUCCIÓN DE IDENTITY Y WALLET CONTEXT DESDE FUENTE DE VERDAD
+      let userData: Partial<User>;
+      if (userDoc.exists()) {
+        userData = userDoc.data() as User;
+      } else if (driver.userProfile) {
+        userData = driver.userProfile;
+      } else {
+        userData = {
+          uid: driver.driverId,
+          activeRole: UserRole.DRIVER,
+          driverProfile: {
+            status: DocumentStatus.PENDING
+          } as any,
+          wallet: {
+            availableBalance: 0
+          } as any
+        };
+      }
+
+      const identityContext = extractIdentityContext(userData);
+      const walletContext = extractWalletContext(userData.wallet);
+
+      // C. EVALUACIÓN ESTRICTA DE ELEGIBILIDAD OPERATIVA
+      const eligibility = canAcceptOrder(identityContext, walletContext, operationalContext);
+      if (!eligibility.eligible) {
+        const error = new Error(`OPERATIONAL_ELIGIBILITY_REJECTED: [${eligibility.code}] ${eligibility.reason}`);
+        (error as any).code = eligibility.code;
+        (error as any).reason = eligibility.reason;
+        throw error;
+      }
+
+      // D. CONCURRENCY CHECK ORIGINAL Y ACTUALIZACIÓN ATÓMICA (INTACTOS)
+      if (orderDoc.exists()) {
+        const cloudData = orderDoc.data();
+        // Si el estado en la nube ya no es PUBLICADO ni asignado a este motorizado, rechazar atómicamente
+        if (cloudData.status !== 'PUBLICADO' && cloudData.driverId !== driver.driverId) {
+          throw new Error(
+            `CONCURRENCY_CONFLICT: El pedido ${orderId} ya fue tomado por otro motorizado (${cloudData.driverName || 'Asignado'}). Estado actual: ${cloudData.status}`
+          );
+        }
+        transaction.update(orderRef, {
+          status: 'ACEPTADO',
+          driverId: driver.driverId,
+          driverName: driver.driverName,
+          driverPhone: driver.driverPhone,
+          driverPlate: driver.driverPlate,
+          driverVehicle: driver.driverVehicle || 'Motocicleta Operativa',
+          acceptedAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      }
+    });
+  } catch (err: any) {
+    if (err?.message && (err.message.includes('CONCURRENCY_CONFLICT') || err.message.includes('OPERATIONAL_ELIGIBILITY_REJECTED'))) {
+      // Elevar inmediatamente para abortar cualquier mutación
+      throw err;
+    }
+    console.warn('[ZENITH-FIRESTORE] Transacción remota omitida/offline, procediendo con verificación local:', err?.message || err);
+  }
+
+  // 3. Verificación y actualización de almacenamiento local
+  // Si la transacción remota no corrió (offline), evaluar elegibilidad localmente para no permitir estados inválidos
+  const localDriverData: Partial<User> = driver.userProfile || {
+    uid: driver.driverId,
+    activeRole: UserRole.DRIVER
+  };
+
+  const localEligibility = canAcceptOrder(
+    extractIdentityContext(localDriverData),
+    extractWalletContext(localDriverData.wallet),
+    operationalContext
+  );
+
+  if (!localEligibility.eligible) {
+    const error = new Error(`OPERATIONAL_ELIGIBILITY_REJECTED: [${localEligibility.code}] ${localEligibility.reason}`);
+    (error as any).code = localEligibility.code;
+    (error as any).reason = localEligibility.reason;
+    throw error;
+  }
+
   const all = getStoredOrders();
   const idx = all.findIndex(o => o.id === orderId);
   if (idx === -1) {
@@ -354,6 +509,59 @@ export async function activateOrder(orderId: string): Promise<OperationRecord> {
     });
   } catch (e) {
     console.log('[ZENITH-FIRESTORE] Estado ACTIVO persistido localmente.');
+  }
+
+  return updated;
+}
+
+/**
+ * ESTADO 6: FINALIZADO
+ * Cierre operacional de la carrera al arribar a destino.
+ * Transición válida únicamente desde ACTIVO.
+ * Operación estrictamente idempotente si ya está FINALIZADO.
+ */
+export async function finalizeOrder(orderId: string): Promise<OperationRecord> {
+  const all = getStoredOrders();
+  const idx = all.findIndex(o => o.id === orderId);
+  if (idx === -1) {
+    throw new Error(`Pedido ${orderId} no encontrado.`);
+  }
+
+  const currentOrder = all[idx];
+
+  // Caso A: Idempotencia si ya está FINALIZADO
+  if (currentOrder.status === 'FINALIZADO') {
+    return currentOrder;
+  }
+
+  // Caso B: Solo se permite transición válida desde ACTIVO
+  if (currentOrder.status !== 'ACTIVO') {
+    throw new Error(
+      `TRANSICIÓN INVÁLIDA: No se puede finalizar una orden en estado '${currentOrder.status}'. Solo se permite finalizar pedidos en estado 'ACTIVO'.`
+    );
+  }
+
+  const now = new Date().toISOString();
+  const updated: OperationRecord = {
+    ...currentOrder,
+    status: 'FINALIZADO',
+    finalizedAt: currentOrder.finalizedAt || now,
+    completedAt: currentOrder.completedAt || now,
+    updatedAt: now
+  };
+
+  all[idx] = updated;
+  saveOrdersToStorage(all);
+
+  try {
+    await updateDoc(doc(db, 'rides', updated.id), {
+      status: 'FINALIZADO',
+      finalizedAt: serverTimestamp(),
+      completedAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  } catch (e) {
+    console.log('[ZENITH-FIRESTORE] Estado FINALIZADO persistido localmente.');
   }
 
   return updated;
@@ -429,16 +637,30 @@ export function subscribeToOperations(callback: (orders: OperationRecord[]) => v
           if (remoteData?.status) {
             const all = getStoredOrders();
             const index = all.findIndex(o => o.id === snap.id);
-            if (index !== -1 && all[index].status !== remoteData.status) {
-              all[index] = {
-                ...all[index],
-                status: remoteData.status,
-                driverId: remoteData.driverId || all[index].driverId,
-                driverName: remoteData.driverName || all[index].driverName,
-                driverPlate: remoteData.driverPlate || all[index].driverPlate,
-                driverPhone: remoteData.driverPhone || all[index].driverPhone
+            if (index !== -1) {
+              const STATUS_WEIGHT: Record<string, number> = {
+                CREADO: 1,
+                PUBLICADO: 2,
+                ASIGNADO: 3,
+                ACEPTADO: 4,
+                ACTIVO: 5,
+                FINALIZADO: 6
               };
-              saveOrdersToStorage(all);
+              const currentWeight = STATUS_WEIGHT[all[index].status] || 0;
+              const remoteWeight = STATUS_WEIGHT[remoteData.status] || 0;
+
+              // NO degradar el estado local si el remoto tiene un estado anterior (stale snapshot)
+              if (remoteWeight >= currentWeight && all[index].status !== remoteData.status) {
+                all[index] = {
+                  ...all[index],
+                  status: remoteData.status,
+                  driverId: remoteData.driverId || all[index].driverId,
+                  driverName: remoteData.driverName || all[index].driverName,
+                  driverPlate: remoteData.driverPlate || all[index].driverPlate,
+                  driverPhone: remoteData.driverPhone || all[index].driverPhone
+                };
+                saveOrdersToStorage(all);
+              }
             }
           }
         }

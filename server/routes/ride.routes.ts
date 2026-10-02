@@ -8,5 +8,7 @@ router.post('/request', requireAuth, rideController.requestRide);
 router.post('/:rideId/accept', requireAuth, rideController.acceptRide);
 router.post('/:rideId/cancel', requireAuth, rideController.cancelRide);
 router.post('/:rideId/status', requireAuth, rideController.updateRideStatus);
+router.post('/:rideId/verify-otp', requireAuth, rideController.verifyOtp);
+router.get('/:rideId/otp', requireAuth, rideController.getPassengerOtp);
 
 export default router;

@@ -5,8 +5,13 @@ import { Express } from 'express';
 
 export const configureSecurity = (app: Express) => {
   // 1. HTTP Security Headers
+  // Frameguard and COOP/COEP must be disabled so the applet renders in the AI Studio iframe preview
   app.use(helmet({
-    contentSecurityPolicy: false, // Disabling temporarily if it breaks Vite HMR in dev
+    contentSecurityPolicy: false,
+    frameguard: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginResourcePolicy: false,
   }));
 
   // 2. CORS

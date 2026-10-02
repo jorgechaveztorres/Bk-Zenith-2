@@ -17,6 +17,8 @@ import { Calendar, Clock, Plus, Trash2, Check, AlertCircle, Play, Loader2, MapPi
 import { motion, AnimatePresence } from 'motion/react';
 import PlacesAutocomplete from './PlacesAutocomplete';
 import { calculatePricing } from '../utils/pricingEngine';
+import { PricingService } from '../services/PricingService';
+import { RideClientService } from '../services/RideClientService';
 import { TelemetryService } from '../services/TelemetryService';
 
 interface ScheduledRidesProps {
@@ -126,19 +128,50 @@ export default function ScheduledRides({ user }: ScheduledRidesProps) {
     }
   };
 
-  // Simulated Instant Dispatcher of reservation
+  // Despliegue verificado de reservación mediante Gatekeeper Server-Side
   const handleDeployScheduleNow = async (sched: ScheduledRide) => {
     try {
-      // Create a live ride based on this reservation
-      await addDoc(collection(db, 'rides'), {
+      // 1. Obtener cotización oficial protegida del servidor
+      const quoteResult = await PricingService.requestQuote({
+        originLat: sched.origin.lat,
+        originLng: sched.origin.lng,
+        destLat: sched.destination.lat,
+        destLng: sched.destination.lng,
+        originAddress: sched.origin.address,
+        destAddress: sched.destination.address
+      });
+
+      // 2. Crear viaje en Firestore mediante Backend Gatekeeper
+      const rawQuote = (quoteResult as any).rawQuote || {
+        quoteId: quoteResult.quoteId,
+        pricingVersion: 'DPE_V2',
+        totalFare: quoteResult.totalFare,
+        normalFare: quoteResult.normalFare || quoteResult.basePrice,
+        multiplier: quoteResult.multiplier,
+        distance: quoteResult.distance,
+        duration: quoteResult.duration,
+        origin: {
+          address: sched.origin.address,
+          lat: sched.origin.lat,
+          lng: sched.origin.lng
+        },
+        destination: {
+          address: sched.destination.address,
+          lat: sched.destination.lat,
+          lng: sched.destination.lng
+        },
+        currency: 'PEN',
+        expiresAt: quoteResult.expiresAt.toISOString(),
+        pricingSeal: quoteResult.seal
+      };
+
+      await RideClientService.requestRide({
+        quote: rawQuote,
         passengerId: sched.passengerId,
         passengerName: sched.passengerName,
-        origin: sched.origin,
-        destination: sched.destination,
-        suggestedPrice: sched.price,
-        status: 'pending',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
+        passengerPhone: (sched as any).passengerPhone || user.phone || '999888777',
+        paymentMethod: 'cash',
+        idempotencyKey: `sched_deploy_${sched.id}_${Date.now()}`
       });
 
       // Update reservation status to active (dispatched)
@@ -150,7 +183,7 @@ export default function ScheduledRides({ user }: ScheduledRidesProps) {
         fromScheduleId: sched.id
       });
 
-      alert('¡Reservación desplegada en tiempo real! Regresa al panel de servicio para recibir ofertas.');
+      alert('¡Reservación desplegada en tiempo real mediante Gatekeeper! Buscando conductor...');
     } catch (e) {
       console.error('[ZENITH-SCHEDULE-ERROR] Deployment simulation failed:', e);
     }

@@ -62,42 +62,20 @@ service cloud.firestore {
       allow get: if isSignedIn();
       allow list: if isSignedIn(); // Los conductores necesitan buscar viajes solicitados
 
-      allow create: if isSignedIn() 
-        && request.resource.data.passengerId == request.auth.uid
-        && request.resource.data.status == 'REQUESTED'
-        && request.resource.data.protectedPrice > 0;
+      // Zero-Trust: Creación exclusiva por Backend Gatekeeper (POST /api/rides/request vía Firebase Admin SDK)
+      allow create: if false;
 
-      allow update: if isSignedIn() && (
-        // Motorizado autenticado: PUBLICADO -> ACEPTADO
-(resource.data.status == 'PUBLICADO' &&
- !resource.data.keys().hasAny(['driverId']) &&
- request.resource.data.status == 'ACEPTADO' &&
- request.resource.data.driverId == request.auth.uid &&
- request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-   'status',
-   'driverId',
-   'driverName',
-   'driverPhone',
-   'driverPlate',
-   'driverVehicle',
-   'acceptedAt',
-   'updatedAt'
-])) ||
-        // El pasajero puede cancelar el viaje o calificarlo al terminar
-        (isRidePassenger(resource.data) && (
-          (request.resource.data.status == 'CANCELLED' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
-          (resource.data.status == 'COMPLETED' && request.resource.data.status == 'COMPLETED' && request.resource.data.diff(resource.data).affectedKeys().hasAny(['rating', 'feedback', 'updatedAt']))
-        )) ||
-        // Un conductor puede tomar el viaje (si está SEARCHING_DRIVER) o actualizar el estado del viaje asignado
-        (resource.data.status == 'SEARCHING_DRIVER' && 
-         request.resource.data.status == 'DRIVER_ASSIGNED' && 
-         request.resource.data.driverId == request.auth.uid &&
-         request.resource.data.diff(resource.data).affectedKeys().hasAll(['status', 'driverId', 'driverName', 'updatedAt'])) ||
-        // El conductor asignado actualiza estados de tránsito y ubicación
-        (isRideDriver(resource.data) && (
-          (request.resource.data.status in ['DRIVER_ARRIVING', 'WAITING_FOR_OTP', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'] && request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'updatedAt'])) ||
-          (request.resource.data.diff(resource.data).affectedKeys().hasAny(['driverLocation', 'updatedAt']))
-        ))
+      allow update: if isSignedIn() 
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'protectedPrice', 'finalPrice', 'basePrice', 'pricingSeal', 
+          'quoteId', 'pricingVersion', 'multiplier', 'marketPressure', 
+          'distance', 'currency', 'status', 'otpHash', 'otpVerified', 
+          'otpAttempts', 'otpMaxAttempts', 'otpExpiresAt', 'driverId', 'passengerId'
+        ]) && (
+        // Pasajero califica viaje una vez completado
+        (isRidePassenger(resource.data) && resource.data.status == 'COMPLETED' && request.resource.data.diff(resource.data).affectedKeys().hasAny(['rating', 'feedback', 'updatedAt'])) ||
+        // Conductor asignado actualiza exclusivamente telemetría GPS en tiempo real
+        (isRideDriver(resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['driverLocation', 'updatedAt']))
       );
     }
 
@@ -137,6 +115,11 @@ service cloud.firestore {
       allow read, write: if false; // Inmutable, creados solo vía Backend (Server Authority)
     }
 
+    // Idempotency Keys (Control atómico de concurrencia y reintentos)
+    match /idempotency_keys/{keyId} {
+      allow read, write: if false; // Exclusivo del Backend Gatekeeper (Server Authority)
+    }
+
     // History (Historial de Servicios Cerrados)
     match /history/{historyId} {
       allow get: if isSignedIn() && (
@@ -172,6 +155,25 @@ service cloud.firestore {
       allow create: if isSignedIn();
       allow read, list: if isSignedIn();
       allow update, delete: if false; // Inmutable
+    }
+
+    // Topup Requests (Solicitudes de Recarga de Wallet V1 - Piloto Yape)
+    match /topup_requests/{topupId} {
+      allow get: if isSignedIn() && (resource.data.driverId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn(); // Filtrado por driverId en consultas del cliente
+      allow write: if false; // Modificaciones de estado y saldo ocurren exclusivamente en Backend Express
+    }
+
+    // Processed Bank Movements (Idempotencia Inmutable de Recargas)
+    match /processed_bank_movements/{movementId} {
+      allow read: if isAdmin();
+      allow write: if false; // Solo por backend atómico
+    }
+
+    // Bank Movements (Confirmaciones Manuales de Movimiento Real)
+    match /bank_movements/{movementId} {
+      allow read: if isAdmin();
+      allow write: if false; // Solo por backend
     }
   }
 }

@@ -22,7 +22,12 @@ import {
   Sliders,
   ChevronRight,
   Radio,
-  Copy
+  Copy,
+  Pause,
+  RotateCcw,
+  Gauge,
+  FastForward,
+  Package
 } from 'lucide-react';
 import { doc, setDoc, updateDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../firebase/config';
@@ -35,11 +40,19 @@ import {
   publishOrder,
   acceptOrderAsMotorizado,
   activateOrder,
+  finalizeOrder,
   updateOperationTelemetry,
-  subscribeToOperations
+  subscribeToOperations,
+  getStoredOrders,
+  saveOrdersToStorage
 } from '../../services/operationalOrdersService';
+import { calculatePricing, PricingResult } from '../../utils/pricingEngine';
 import { OperationStatusStepper } from './OperationStatusStepper';
 import { VirtualSandboxTestRunner } from './VirtualSandboxTestRunner';
+import { DocumentStatus, UserRole } from '../../types';
+import ZenithOrderCreationModal from '../delivery/ZenithOrderCreationModal';
+import ZenithImperialEagleMarker from '../maps/ZenithImperialEagleMarker';
+import CallPhoneButton from '../common/CallPhoneButton';
 import {
   DetectedGeoContext,
   PERU_NEUTRAL_CENTER,
@@ -64,7 +77,41 @@ export const TEST_ACTORS = {
     phone: '+51 944 556 677',
     plate: 'TR-8899-MOTO',
     vehicleModel: 'Honda GL150 Negra',
-    role: 'driver'
+    role: 'driver' as const,
+    activeRole: 'MOTORIZADO' as const,
+    rolesEnabled: ['driver', 'MOTORIZADO'] as (UserRole | 'CLIENTE' | 'MOTORIZADO')[],
+    isBlocked: false,
+    driverProfile: {
+      status: DocumentStatus.APPROVED,
+      availability: true,
+      rating: 5.0,
+      appVersion: '2.4.0-TEST',
+      vehicle: {
+        category: 'Zenith Standard',
+        plate: 'TR-8899-MOTO',
+        brand: 'Honda',
+        model: 'GL150 Negra',
+        year: 2024,
+        color: 'Negra'
+      },
+      documentation: {
+        licenseNumber: 'TEST-MTC-01',
+        licenseExpiry: '2030-12-31'
+      }
+    },
+    wallet: {
+      availableBalance: 100.00,
+      digitalBalance: 100.00,
+      retainedBalance: 0.00,
+      cashDebt: 0.00,
+      pendingSettlement: 0.00,
+      accumulatedCommission: 0.00,
+      dailyEarnings: 0.00,
+      weeklyEarnings: 0.00,
+      movements: [],
+      todaySettlements: 0,
+      nextSettlementDate: '2026-10-01T00:00:00.000Z'
+    }
   },
   RECEPTOR: {
     uid: 'test-receptor-01',
@@ -221,15 +268,62 @@ function MapPanner({ target }: { target: google.maps.LatLngLiteral | null }) {
 }
 
 // ============================================================================
+// HELPERS MATEMÁTICOS DE RUTA (BEARING & DISTANCIA GEODÉSICA)
+// ============================================================================
+function getBearing(startLat: number, startLng: number, endLat: number, endLng: number): number {
+  const startLatRad = (startLat * Math.PI) / 180;
+  const startLngRad = (startLng * Math.PI) / 180;
+  const endLatRad = (endLat * Math.PI) / 180;
+  const endLngRad = (endLng * Math.PI) / 180;
+
+  const dLng = endLngRad - startLngRad;
+  const y = Math.sin(dLng) * Math.cos(endLatRad);
+  const x = Math.cos(startLatRad) * Math.sin(endLatRad) -
+            Math.sin(startLatRad) * Math.cos(endLatRad) * Math.cos(dLng);
+  const brng = (Math.atan2(y, x) * 180) / Math.PI;
+  return Math.round((brng + 360) % 360);
+}
+
+function computeDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371e3; // Radio de la Tierra en metros
+  const phi1 = (lat1 * Math.PI) / 180;
+  const phi2 = (lat2 * Math.PI) / 180;
+  const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
+  const deltaLambda = ((lng2 - lng1) * Math.PI) / 180;
+
+  const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+            Math.cos(phi1) * Math.cos(phi2) *
+            Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
+}
+
+function computeRemainingPolylineDistance(points: google.maps.LatLngLiteral[], currentIndex: number): number {
+  if (!points || points.length <= 1 || currentIndex >= points.length - 1) return 0;
+  let totalMeters = 0;
+  for (let i = currentIndex; i < points.length - 1; i++) {
+    totalMeters += computeDistance(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng);
+  }
+  return totalMeters;
+}
+
+// ============================================================================
 // COMPONENTE PRINCIPAL: MODO PRUEBA DEL CORAZÓN OPERATIVO (FASE 1)
 // ============================================================================
 export default function OperationalHeartTestView({
-  onClose
+  onClose,
+  onReturnHome
 }: {
   onClose?: () => void;
+  onReturnHome?: () => void;
 }) {
   // Rol activo para la prueba
   const [activeRole, setActiveRole] = useState<'SOLICITANTE' | 'MOTORIZADO' | 'RECEPTOR' | 'SANDBOX_VIRTUAL'>('SOLICITANTE');
+
+  // Control de finalización idempotente y transición a Home
+  const isFinalizingRef = useRef(false);
+  const [finalizingOrder, setFinalizingOrder] = useState(false);
 
   // Estado de inputs para Solicitante (limpios e independientes para permitir libre ingreso en cualquier ciudad del Perú)
   const [originInput, setOriginInput] = useState('');
@@ -260,36 +354,65 @@ export default function OperationalHeartTestView({
     polylinePoints: google.maps.LatLngLiteral[];
   } | null>(null);
 
+  // Datos tarifarios DPE V2 calculados
+  const [pricingData, setPricingData] = useState<PricingResult | null>(null);
+
   // Operación activa y sincronización reactiva en tiempo real (BroadcastChannel + LocalStorage + Firestore)
   const [operations, setOperations] = useState<OperationRecord[]>([]);
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
+  const [currentTestUid, setCurrentTestUid] = useState<string | null>(auth.currentUser?.uid || null);
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [orderCreatedSuccess, setOrderCreatedSuccess] = useState(false);
+  const [showCreationModal, setShowCreationModal] = useState(false);
+
+  // Limpieza exclusiva de órdenes TEST huérfanas del actor antes de iniciar una nueva prueba
+  const cleanOrphanTestOrders = (driverUid: string) => {
+    const all = getStoredOrders();
+    const cleaned = all.filter(o => {
+      const isActorOrder = o.driverId === driverUid || o.driverId === TEST_ACTORS.MOTORIZADO.uid || o.passengerId === TEST_ACTORS.SOLICITANTE.uid;
+      return !(isActorOrder && o.status !== 'FINALIZADO');
+    });
+    if (cleaned.length !== all.length) {
+      saveOrdersToStorage(cleaned);
+    }
+  };
 
   // Suscripción reactiva multicanal en tiempo real
   useEffect(() => {
     const unsubscribe = subscribeToOperations((ops) => {
       setOperations(ops);
       setActiveOrderId(prev => {
-        if (prev && ops.some(o => o.id === prev)) return prev;
-        return ops.length > 0 ? ops[0].id : null;
+        if (prev && ops.some(o => o.id === prev && o.status !== 'FINALIZADO')) return prev;
+        const pendingActive = ops.find(o => o.status !== 'FINALIZADO');
+        return pendingActive ? pendingActive.id : null;
       });
     });
     return () => unsubscribe();
   }, []);
 
-  // Orden activa seleccionada para seguimiento
+  // Orden activa seleccionada para seguimiento (prioriza orden activa seleccionada o pendiente en curso)
   const activeOrder: OperationRecord | null =
-    operations.find(o => o.id === activeOrderId) ||
-    (operations.length > 0 ? operations[0] : null);
+    (activeOrderId ? operations.find(o => o.id === activeOrderId) : null) ||
+    operations.find(o => o.status !== 'FINALIZADO') ||
+    null;
+
+  // Tarifa activa unificada (proveniente del cálculo actual o del pedido persistido)
+  const currentPricing = pricingData || (activeOrder?.protectedPrice !== undefined ? {
+    totalFare: activeOrder.protectedPrice,
+    normalFare: activeOrder.basePrice ?? activeOrder.protectedPrice,
+    multiplier: activeOrder.multiplier ?? 1.0,
+    marketPressure: activeOrder.marketPressure ?? 1.0,
+    distanceSource: 'GOOGLE_DIRECTIONS' as const,
+    seal: activeOrder.pricingSeal || ''
+  } : null);
 
   // Pedidos disponibles para aceptar (Estado estricto: PUBLICADO)
   const availableOrders = operations.filter(o => o.status === 'PUBLICADO');
 
-  // Operación del motorizado en curso
+  // Operación del motorizado en curso (estrictamente no finalizada)
   const motorizadoCurrentOrder = operations.find(
-    o => o.driverId === TEST_ACTORS.MOTORIZADO.uid ||
-    (o.status === 'ACEPTADO' || o.status === 'ACTIVO' || o.status === 'ASIGNADO')
+    o => (o.status === 'ACEPTADO' || o.status === 'ACTIVO' || o.status === 'ASIGNADO') &&
+    (o.driverId === (currentTestUid || TEST_ACTORS.MOTORIZADO.uid) || o.driverId === TEST_ACTORS.MOTORIZADO.uid || o.id === activeOrderId)
   );
 
   // Estado GPS real del Motorizado
@@ -304,6 +427,15 @@ export default function OperationalHeartTestView({
   } | null>(null);
   const [gpsUpdatesCount, setGpsUpdatesCount] = useState(0);
   const [gpsErrorMessage, setGpsErrorMessage] = useState<string | null>(null);
+
+  // Estados del Modo Telemetría y Simulador de Ruta (Cockpit DEV)
+  const [telemetryMode, setTelemetryMode] = useState<'SIMULATOR' | 'PHYSICAL_GPS'>('SIMULATOR');
+  const [simStatus, setSimStatus] = useState<'IDLE' | 'RUNNING' | 'PAUSED' | 'COMPLETED'>('IDLE');
+  const [simCurrentIndex, setSimCurrentIndex] = useState<number>(0);
+  const [simSpeedMultiplier, setSimSpeedMultiplier] = useState<1 | 2 | 4>(1);
+  const simCurrentIndexRef = useRef<number>(0);
+  const simIntervalRef = useRef<any>(null);
+  const simHeadingRef = useRef<number>(0);
 
   // Centro del mapa: dinámico según última ubicación conocida o centro neutral de Perú (sin forzar Trujillo)
   const [mapCenter, setMapCenter] = useState<google.maps.LatLngLiteral>(() => {
@@ -420,18 +552,79 @@ export default function OperationalHeartTestView({
     setRecenterTarget({ lat: detectedGeoContext.lat, lng: detectedGeoContext.lng });
   };
 
-  // Asegurar autenticación anónima si no hay usuario para Firestore
+  // Asegurar autenticación real y perfil de prueba homologado en Firestore
   useEffect(() => {
-    if (!auth.currentUser) {
-      signInAnonymously(auth).catch(err => {
-        console.warn('[ZENITH-TEST] Anonymous sign-in warning:', err);
-      });
-    }
+    const initTestAuth = async () => {
+      let user = auth.currentUser;
+      if (!user) {
+        try {
+          const cred = await signInAnonymously(auth);
+          user = cred.user;
+        } catch (err) {
+          console.warn('[ZENITH-TEST] Anonymous sign-in warning:', err);
+        }
+      }
+
+      if (user) {
+        setCurrentTestUid(user.uid);
+
+        // Sembrar el perfil homologado documental (KYC APPROVED) y Wallet con saldo para el UID real autenticado
+        try {
+          await setDoc(doc(db, 'users', user.uid), {
+            uid: user.uid,
+            role: 'driver',
+            activeRole: 'MOTORIZADO',
+            fullName: TEST_ACTORS.MOTORIZADO.name,
+            phone: TEST_ACTORS.MOTORIZADO.phone,
+            isBlocked: false,
+            driverProfile: {
+              status: DocumentStatus.APPROVED,
+              availability: true,
+              rating: 5.0,
+              appVersion: '2.4.0-TEST',
+              vehicle: {
+                category: 'Zenith Standard',
+                plate: TEST_ACTORS.MOTORIZADO.plate,
+                brand: 'Honda',
+                model: TEST_ACTORS.MOTORIZADO.vehicleModel,
+                year: 2024,
+                color: 'Negra'
+              },
+              documentation: {
+                licenseNumber: 'TEST-MTC-01',
+                licenseExpiry: '2030-12-31'
+              }
+            },
+            wallet: {
+              availableBalance: 100.00,
+              digitalBalance: 100.00,
+              retainedBalance: 0.00,
+              cashDebt: 0.00,
+              pendingSettlement: 0.00,
+              accumulatedCommission: 0.00,
+              dailyEarnings: 0.00,
+              weeklyEarnings: 0.00,
+              movements: [],
+              todaySettlements: 0,
+              nextSettlementDate: '2026-10-01T00:00:00.000Z'
+            },
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+        } catch (err) {
+          console.warn('[ZENITH-TEST] Warning seeding driver profile in Firestore:', err);
+        }
+
+        // Limpiar únicamente órdenes TEST huérfanas del actor antes de iniciar una nueva prueba
+        cleanOrphanTestOrders(user.uid);
+      }
+    };
+
+    initTestAuth();
   }, []);
 
-  // Sincronizar posición del motorizado en el solicitante si la orden tiene telemetría
+  // Sincronizar posición del motorizado desde la telemetría de la orden activa
   useEffect(() => {
-    if (activeOrder?.driverLocation && activeRole === 'SOLICITANTE') {
+    if (activeOrder?.driverLocation) {
       setRealMotorizadoLocation({
         lat: activeOrder.driverLocation.lat,
         lng: activeOrder.driverLocation.lng,
@@ -440,15 +633,22 @@ export default function OperationalHeartTestView({
         heading: activeOrder.driverLocation.heading || 0,
         timestamp: activeOrder.driverLocation.updatedAt || new Date().toLocaleTimeString()
       });
+      if (simStatus === 'RUNNING') {
+        setRecenterTarget({ lat: activeOrder.driverLocation.lat, lng: activeOrder.driverLocation.lng });
+      }
     }
-  }, [activeOrder?.driverLocation, activeRole]);
+  }, [activeOrder?.driverLocation, simStatus]);
 
-  // Limpiar GPS al desmontar
+  // Limpiar GPS y Simulador al desmontar
   useEffect(() => {
     return () => {
       if (watchIdRef.current !== null && navigator.geolocation) {
         navigator.geolocation.clearWatch(watchIdRef.current);
         watchIdRef.current = null;
+      }
+      if (simIntervalRef.current) {
+        clearInterval(simIntervalRef.current);
+        simIntervalRef.current = null;
       }
     };
   }, []);
@@ -598,19 +798,49 @@ export default function OperationalHeartTestView({
 
       setRouteData(calculatedData);
 
-      // PASO 1 OPERATIVO: Crear automáticamente el borrador en estado CREADO
+      // CÁLCULO TARIFARIO DPE V2 SOBRE DISTANCIA VIAL GOOGLE
+      const distanceKm = calculatedData.distanceMeters / 1000;
+      const durationMin = calculatedData.durationSeconds / 60;
+      const originAddr = originCoords?.address || originInput || 'Origen de la Operación';
+      const destAddr = destCoords?.address || destInput || 'Destino de la Operación';
+
+      const pricing = calculatePricing(
+        origin.lat,
+        origin.lng,
+        destination.lat,
+        destination.lng,
+        originAddr,
+        destAddr,
+        {
+          distanceKm,
+          durationMin,
+          distanceSource: 'GOOGLE_DIRECTIONS'
+        }
+      );
+      setPricingData(pricing);
+
+      // PASO 1 OPERATIVO: Crear automáticamente el borrador en estado CREADO con tarifa inmutable protegida
       const draft = createDraftOrder({
-        originAddress: originCoords?.address || originInput || 'Origen de la Operación',
+        originAddress: originAddr,
         originLat: origin.lat,
         originLng: origin.lng,
-        destinationAddress: destCoords?.address || destInput || 'Destino de la Operación',
+        destinationAddress: destAddr,
         destLat: destination.lat,
         destLng: destination.lng,
         distanceText: calculatedData.distanceText,
         durationText: calculatedData.durationText,
         distanceMeters: calculatedData.distanceMeters,
         durationSeconds: calculatedData.durationSeconds,
-        polylinePoints: calculatedData.polylinePoints
+        polylinePoints: calculatedData.polylinePoints,
+        // DPE V2
+        protectedPrice: pricing.totalFare,
+        finalPrice: pricing.totalFare,
+        pricingSeal: pricing.seal,
+        pricingVersion: pricing.pricingVersion,
+        basePrice: pricing.normalFare,
+        multiplier: pricing.multiplier,
+        marketPressure: pricing.marketPressure,
+        currency: 'PEN'
       });
       setActiveOrderId(draft.id);
     } catch (err: any) {
@@ -634,6 +864,10 @@ export default function OperationalHeartTestView({
     setOrderCreatedSuccess(false);
 
     try {
+      // Limpiar únicamente órdenes TEST huérfanas del actor antes de publicar una nueva prueba
+      const driverUid = auth.currentUser?.uid || currentTestUid || TEST_ACTORS.MOTORIZADO.uid;
+      cleanOrphanTestOrders(driverUid);
+
       const published = await publishOrder(activeOrder.id);
       setActiveOrderId(published.id);
       setOrderCreatedSuccess(true);
@@ -649,13 +883,50 @@ export default function OperationalHeartTestView({
   // PASO 5: MOTORIZADO ACEPTA EL PEDIDO (PUBLICADO -> ASIGNADO -> ACEPTADO)
   // ============================================================================
   const handleAcceptOrder = async (orderId: string) => {
+    const driverUid = auth.currentUser?.uid || currentTestUid || TEST_ACTORS.MOTORIZADO.uid;
     try {
       const accepted = await acceptOrderAsMotorizado(orderId, {
-        driverId: TEST_ACTORS.MOTORIZADO.uid,
+        driverId: driverUid,
         driverName: TEST_ACTORS.MOTORIZADO.name,
         driverPhone: TEST_ACTORS.MOTORIZADO.phone,
         driverPlate: TEST_ACTORS.MOTORIZADO.plate,
-        driverVehicle: `${TEST_ACTORS.MOTORIZADO.vehicleModel}`
+        driverVehicle: `${TEST_ACTORS.MOTORIZADO.vehicleModel}`,
+        userProfile: {
+          uid: driverUid,
+          activeRole: 'MOTORIZADO',
+          role: UserRole.DRIVER,
+          driverProfile: {
+            status: DocumentStatus.APPROVED,
+            availability: true,
+            rating: 5.0,
+            appVersion: '2.4.0-TEST',
+            vehicle: {
+              category: 'Zenith Standard',
+              plate: TEST_ACTORS.MOTORIZADO.plate,
+              brand: 'Honda',
+              model: TEST_ACTORS.MOTORIZADO.vehicleModel,
+              year: 2024,
+              color: 'Negra'
+            },
+            documentation: {
+              licenseNumber: 'TEST-MTC-01',
+              licenseExpiry: '2030-12-31'
+            }
+          } as any,
+          wallet: {
+            availableBalance: 100.00,
+            digitalBalance: 100.00,
+            retainedBalance: 0.00,
+            cashDebt: 0.00,
+            pendingSettlement: 0.00,
+            accumulatedCommission: 0.00,
+            dailyEarnings: 0.00,
+            weeklyEarnings: 0.00,
+            movements: [],
+            todaySettlements: 0,
+            nextSettlementDate: '2026-10-01T00:00:00.000Z'
+          }
+        }
       });
       setActiveOrderId(accepted.id);
     } catch (err: any) {
@@ -680,9 +951,63 @@ export default function OperationalHeartTestView({
   };
 
   // ============================================================================
+  // PASO 7: CIERRE OPERACIONAL (ACTIVO -> FINALIZADO -> HOME)
+  // ============================================================================
+  const handleFinalizeOrder = async (orderId: string) => {
+    if (isFinalizingRef.current) return;
+    try {
+      isFinalizingRef.current = true;
+      setFinalizingOrder(true);
+
+      // Detener simulación si está corriendo
+      if (simIntervalRef.current) {
+        clearInterval(simIntervalRef.current);
+        simIntervalRef.current = null;
+      }
+      // Detener telemetría de GPS físico
+      stopRealDeviceGPS();
+      setSimStatus('COMPLETED');
+
+      // Actualizar telemetría final en 0 si hay puntos disponibles
+      if (routeData?.polylinePoints && routeData.polylinePoints.length > 0) {
+        const lastPt = routeData.polylinePoints[routeData.polylinePoints.length - 1];
+        updateOperationTelemetry(orderId, {
+          lat: lastPt.lat,
+          lng: lastPt.lng,
+          accuracy: 2.0,
+          speed: 0,
+          heading: simHeadingRef.current || 0
+        });
+      }
+
+      await finalizeOrder(orderId);
+      setActiveOrderId(null);
+
+      // Regresar al Home tras confirmación visual de persistencia
+      setTimeout(() => {
+        isFinalizingRef.current = false;
+        setFinalizingOrder(false);
+        if (onReturnHome) {
+          onReturnHome();
+        } else if (onClose) {
+          onClose();
+        }
+      }, 1200);
+    } catch (err: any) {
+      console.error('[ZENITH-TEST] Error al finalizar orden:', err);
+      isFinalizingRef.current = false;
+      setFinalizingOrder(false);
+      alert(err.message || 'Error al finalizar la orden.');
+    }
+  };
+
+  // ============================================================================
   // PASO 6: OBTENCIÓN DE GPS REAL DEL DISPOSITIVO FÍSICO
   // ============================================================================
   const startRealDeviceGPS = () => {
+    // REGLA 3: Exclusión mutua con el simulador de ruta
+    stopRouteSimulation();
+
     if (!navigator.geolocation) {
       setGpsStatus('ERROR');
       setGpsErrorMessage('La geolocalización no está soportada en este navegador.');
@@ -796,6 +1121,198 @@ export default function OperationalHeartTestView({
       },
       { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
     );
+  };
+
+  // ============================================================================
+  // PASO 7: MOTOR DE SIMULACIÓN DE RUTA (COCKPIT DEV)
+  // Recorre activeOrder.polylinePoints e inyecta telemetría real en updateOperationTelemetry
+  // ============================================================================
+  const stopRouteSimulation = (resetToIdle = false) => {
+    if (simIntervalRef.current) {
+      clearInterval(simIntervalRef.current);
+      simIntervalRef.current = null;
+    }
+    if (resetToIdle) {
+      simCurrentIndexRef.current = 0;
+      setSimCurrentIndex(0);
+      setSimStatus('IDLE');
+    } else if (simStatus === 'RUNNING') {
+      setSimStatus('PAUSED');
+    }
+  };
+
+  const startRouteSimulation = (fromIndex?: number, speed?: 1 | 2 | 4) => {
+    // REGLA 3: Mutuamente excluyente con el GPS físico
+    stopRealDeviceGPS();
+
+    const points = (activeOrder?.polylinePoints && activeOrder.polylinePoints.length > 0)
+      ? activeOrder.polylinePoints
+      : (routeData?.polylinePoints || []);
+
+    if (points.length === 0) {
+      alert('Debes calcular y publicar una ruta antes de iniciar el simulador.');
+      return;
+    }
+
+    if (simIntervalRef.current) {
+      clearInterval(simIntervalRef.current);
+      simIntervalRef.current = null;
+    }
+
+    const currentMultiplier = speed ?? simSpeedMultiplier;
+    const startIndex = fromIndex !== undefined ? fromIndex : simCurrentIndexRef.current;
+
+    simCurrentIndexRef.current = startIndex;
+    setSimCurrentIndex(startIndex);
+    setSimStatus('RUNNING');
+
+    // Emisión inmediata de telemetría para el punto inicial
+    const initialPt = points[startIndex];
+    const nextPt = startIndex < points.length - 1 ? points[startIndex + 1] : initialPt;
+    const initialHeading = getBearing(initialPt.lat, initialPt.lng, nextPt.lat, nextPt.lng);
+    simHeadingRef.current = initialHeading;
+
+    if (activeOrder?.id) {
+      updateOperationTelemetry(activeOrder.id, {
+        lat: initialPt.lat,
+        lng: initialPt.lng,
+        accuracy: 3.0,
+        speed: Math.round(25 * currentMultiplier),
+        heading: initialHeading
+      });
+    }
+
+    const stepIntervalMs = Math.round(1000 / currentMultiplier);
+
+    simIntervalRef.current = setInterval(() => {
+      const curIdx = simCurrentIndexRef.current;
+      const nextIdx = curIdx + 1;
+
+      if (nextIdx >= points.length) {
+        // Llegada a destino (Punto N-1)
+        if (simIntervalRef.current) {
+          clearInterval(simIntervalRef.current);
+          simIntervalRef.current = null;
+        }
+
+        // 1. Conservar coordenada final y heading con velocidad = 0
+        const lastPt = points[points.length - 1];
+        const targetOrderId = activeOrder?.id;
+        if (targetOrderId) {
+          updateOperationTelemetry(targetOrderId, {
+            lat: lastPt.lat,
+            lng: lastPt.lng,
+            accuracy: 2.0,
+            speed: 0,
+            heading: simHeadingRef.current || 0
+          });
+        }
+
+        // 2. Detener telemetría de GPS físico si estuviese corriendo
+        stopRealDeviceGPS();
+
+        // 3. Actualizar estado de simulación a COMPLETED
+        setSimStatus('COMPLETED');
+
+        // 4. Ejecutar cierre operacional oficial (finalizeOrder)
+        if (targetOrderId && !isFinalizingRef.current) {
+          isFinalizingRef.current = true;
+          setFinalizingOrder(true);
+          finalizeOrder(targetOrderId)
+            .then(() => {
+              // 5. Limpieza de contexto activo
+              setActiveOrderId(null);
+
+              // 6. Retorno al Home del Motorizado tras confirmación
+              setTimeout(() => {
+                isFinalizingRef.current = false;
+                setFinalizingOrder(false);
+                if (onReturnHome) {
+                  onReturnHome();
+                } else if (onClose) {
+                  onClose();
+                }
+              }, 1200);
+            })
+            .catch((err) => {
+              console.error('[ZENITH-OPERATIONAL] Error al finalizar orden al arribo:', err);
+              isFinalizingRef.current = false;
+              setFinalizingOrder(false);
+            });
+        }
+
+        return;
+      }
+
+      // Avanzar al siguiente punto de la polilínea
+      simCurrentIndexRef.current = nextIdx;
+      setSimCurrentIndex(nextIdx);
+
+      const curPt = points[nextIdx];
+      const subsequentPt = nextIdx < points.length - 1 ? points[nextIdx + 1] : curPt;
+      const heading = getBearing(curPt.lat, curPt.lng, subsequentPt.lat, subsequentPt.lng);
+      simHeadingRef.current = heading;
+
+      const segDistance = computeDistance(curPt.lat, curPt.lng, subsequentPt.lat, subsequentPt.lng);
+      const computedSpeedKmh = Math.min(65, Math.max(18, Math.round((segDistance / (stepIntervalMs / 1000)) * 3.6)));
+
+      // REGLA 5: Toda posición simulada debe pasar por updateOperationTelemetry
+      if (activeOrder?.id) {
+        updateOperationTelemetry(activeOrder.id, {
+          lat: curPt.lat,
+          lng: curPt.lng,
+          accuracy: 3.0,
+          speed: computedSpeedKmh,
+          heading
+        });
+      }
+    }, stepIntervalMs);
+  };
+
+  const handlePauseSimulation = () => {
+    if (simIntervalRef.current) {
+      clearInterval(simIntervalRef.current);
+      simIntervalRef.current = null;
+    }
+    setSimStatus('PAUSED');
+  };
+
+  const handleResumeSimulation = () => {
+    startRouteSimulation(simCurrentIndexRef.current, simSpeedMultiplier);
+  };
+
+  const handleRestartSimulation = () => {
+    if (simIntervalRef.current) {
+      clearInterval(simIntervalRef.current);
+      simIntervalRef.current = null;
+    }
+    simCurrentIndexRef.current = 0;
+    setSimCurrentIndex(0);
+    setSimStatus('IDLE');
+
+    const points = (activeOrder?.polylinePoints && activeOrder.polylinePoints.length > 0)
+      ? activeOrder.polylinePoints
+      : (routeData?.polylinePoints || []);
+
+    if (points.length > 0 && activeOrder?.id) {
+      const p0 = points[0];
+      const p1 = points[1] || p0;
+      const heading = getBearing(p0.lat, p0.lng, p1.lat, p1.lng);
+      updateOperationTelemetry(activeOrder.id, {
+        lat: p0.lat,
+        lng: p0.lng,
+        accuracy: 3.0,
+        speed: 0,
+        heading
+      });
+    }
+  };
+
+  const handleChangeSpeed = (speed: 1 | 2 | 4) => {
+    setSimSpeedMultiplier(speed);
+    if (simStatus === 'RUNNING') {
+      startRouteSimulation(simCurrentIndexRef.current, speed);
+    }
   };
 
   // Marcadores combinados para el mapa
@@ -981,6 +1498,55 @@ export default function OperationalHeartTestView({
                   Nota: Tu ubicación física actúa como contexto. Puedes ingresar libremente cualquier origen y destino en cualquier ciudad o departamento del Perú.
                 </p>
               </div>
+
+              {/* Notificación Reactiva Inmediata: Pedido Creado y Publicado */}
+              {activeOrder && activeOrder.status === 'PUBLICADO' && (
+                <div className="p-4 bg-yellow-500/15 border border-yellow-500/50 rounded-2xl space-y-3 shadow-glow">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-mono text-yellow-400 font-bold">
+                      <Radio size={16} className="animate-pulse" />
+                      <span>¡OPERACIÓN ZÉNITH PUBLICADA EN RED!</span>
+                    </div>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-300 font-black">
+                      PUBLICADO
+                    </span>
+                  </div>
+                  <div className="bg-black/60 p-3 rounded-xl border border-white/5 space-y-1.5 text-xs font-mono text-gray-300">
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-500">ID Operación:</span>
+                      <strong className="text-white bg-white/10 px-2 py-0.5 rounded">{activeOrder.id}</strong>
+                    </div>
+                    <div><span className="text-gray-500">Recojo:</span> {activeOrder.originAddress}</div>
+                    <div><span className="text-gray-500">Entrega:</span> {activeOrder.destinationAddress}</div>
+                    <div className="flex justify-between items-center pt-1 border-t border-white/5">
+                      <span className="text-gray-500">Tarifa Protegida:</span>
+                      <strong className="text-[#39FF14] text-sm">S/ {(activeOrder.protectedPrice || 0).toFixed(2)}</strong>
+                    </div>
+                  </div>
+                  <p className="text-[11px] font-mono text-gray-300">
+                    El pedido está disponible para los motorizados en <strong>PEDIDOS DISPONIBLES EN RED</strong>.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveRole('MOTORIZADO')}
+                    className="w-full bg-[#39FF14] hover:bg-[#32e012] text-black py-3 rounded-xl text-xs font-mono font-black uppercase tracking-wider flex items-center justify-center gap-2 shadow-glow transition-all cursor-pointer"
+                  >
+                    <span>Pasar a vista de Motorizado para Aceptar Pedido</span>
+                    <ArrowRight size={14} />
+                  </button>
+                </div>
+              )}
+
+              {/* Formulario Completo de Entrega Modal */}
+              <button
+                type="button"
+                onClick={() => setShowCreationModal(true)}
+                className="w-full bg-[#39FF14]/15 hover:bg-[#39FF14]/25 border border-[#39FF14]/40 text-[#39FF14] py-3.5 px-4 rounded-2xl font-mono text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 shadow-glow transition-all cursor-pointer"
+              >
+                <Package size={16} />
+                <span>Formulario Completo de Operación Zénith</span>
+                <ChevronRight size={14} />
+              </button>
 
               {/* Presets Rápidos Regionales (Demostración Multiciudad Perú) */}
               <div className="bg-white/5 border border-white/10 p-4 rounded-2xl space-y-3">
@@ -1179,6 +1745,52 @@ export default function OperationalHeartTestView({
                     </div>
                   </div>
 
+                  {/* Tarjeta de Tarifa ZÉNITH (DPE V2) */}
+                  {currentPricing && (
+                    <div className="bg-black/90 border border-[#39FF14]/40 p-4 rounded-xl space-y-3 shadow-glow">
+                      <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                        <div className="flex items-center gap-2">
+                          <Zap size={14} className="text-[#39FF14] animate-pulse" />
+                          <span className="text-xs font-mono font-bold uppercase tracking-wider text-white">
+                            TARIFA ZÉNITH
+                          </span>
+                        </div>
+                        <span className="text-[9px] font-mono text-[#39FF14] bg-[#39FF14]/10 border border-[#39FF14]/30 px-2 py-0.5 rounded font-bold uppercase">
+                          DPE V2 · {currentPricing.distanceSource === 'GOOGLE_DIRECTIONS' ? 'Ruta Vial' : 'Geodésica'}
+                        </span>
+                      </div>
+
+                      <div className="flex items-baseline justify-between pt-1">
+                        <div>
+                          <span className="text-[10px] font-mono text-gray-400 uppercase tracking-widest block">
+                            Precio Final
+                          </span>
+                          <div className="text-3xl font-black font-mono text-[#39FF14] tracking-tight">
+                            S/ {currentPricing.totalFare.toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="text-right space-y-0.5 font-mono text-[11px]">
+                          <div className="text-gray-400">
+                            Tarifa normal: <strong className="text-white">S/ {currentPricing.normalFare.toFixed(2)}</strong>
+                          </div>
+                          <div className="text-gray-400">
+                            Multiplicador: <strong className="text-[#39FF14]">×{currentPricing.multiplier.toFixed(2)}</strong>
+                          </div>
+                          <div className="text-gray-500 text-[10px]">
+                            Presión mercado: {currentPricing.marketPressure.toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {currentPricing.seal && (
+                        <div className="p-2 bg-white/5 rounded-lg border border-white/5 flex items-center justify-between text-[9px] font-mono text-gray-400">
+                          <span className="truncate max-w-[200px]">SELLO: {currentPricing.seal}</span>
+                          <span className="text-[#39FF14] font-bold">PROTEGIDO</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <button
                     onClick={handlePublishOrder}
                     disabled={creatingOrder || activeOrder?.status !== 'CREADO'}
@@ -1229,9 +1841,13 @@ export default function OperationalHeartTestView({
                       <div className="bg-black/50 p-3 rounded-lg text-[11px] font-mono space-y-1 text-gray-300 border border-white/5">
                         <div><span className="text-gray-500">Conductor:</span> <strong className="text-white">{activeOrder.driverName}</strong></div>
                         <div><span className="text-gray-500">Placa:</span> <strong className="text-[#39FF14]">{activeOrder.driverPlate}</strong></div>
-                        <div><span className="text-gray-500">Teléfono:</span> {activeOrder.driverPhone}</div>
+                        <div><span className="text-gray-500">Teléfono:</span> {activeOrder.driverPhone || 'No registrado'}</div>
                         <div><span className="text-gray-500">Vehículo:</span> {activeOrder.driverVehicle}</div>
                         <div><span className="text-gray-500">Estado de Operación:</span> <strong className="text-[#39FF14]">{activeOrder.status}</strong></div>
+                        <div className="pt-2 flex items-center justify-between border-t border-white/5">
+                          <span className="text-[10px] text-gray-400">Contacto Directo:</span>
+                          <CallPhoneButton phone={activeOrder.driverPhone} recipientLabel="Motorizado" size="sm" />
+                        </div>
                       </div>
                       <p className="text-[11px] font-mono text-gray-400">
                         {activeOrder.status === 'ACTIVO'
@@ -1299,6 +1915,9 @@ export default function OperationalHeartTestView({
                         <div className="flex items-center justify-between text-[10px] text-gray-400 pt-1">
                           <span>Distancia: <strong className="text-white">{order.distanceText}</strong></span>
                           <span>Tiempo: <strong className="text-[#39FF14]">{order.durationText}</strong></span>
+                          {order.protectedPrice !== undefined && (
+                            <span>Tarifa: <strong className="text-[#39FF14] font-black">S/ {order.protectedPrice.toFixed(2)}</strong></span>
+                          )}
                         </div>
                       </div>
 
@@ -1354,6 +1973,17 @@ export default function OperationalHeartTestView({
                     <div className="flex items-center justify-between text-[11px] text-gray-400 pt-1">
                       <span>Solicitante: <strong className="text-white">{activeOrder.passengerName}</strong></span>
                       <span>Trayecto: <strong className="text-[#39FF14]">{activeOrder.distanceText}</strong></span>
+                      {activeOrder.protectedPrice !== undefined && (
+                        <span>Tarifa: <strong className="text-[#39FF14] font-black">S/ {activeOrder.protectedPrice.toFixed(2)}</strong></span>
+                      )}
+                    </div>
+                    {/* Botón de Llamada Telefónica Directa al Cliente/Solicitante */}
+                    <div className="flex items-center justify-between p-2.5 bg-black/40 rounded-xl border border-white/5 mt-1">
+                      <div className="text-[11px] font-mono">
+                        <span className="text-gray-500 uppercase block text-[9px]">Teléfono Solicitante:</span>
+                        <span className="text-white font-bold">{activeOrder.passengerPhone || 'No registrado'}</span>
+                      </div>
+                      <CallPhoneButton phone={activeOrder.passengerPhone} recipientLabel="Cliente" size="sm" />
                     </div>
                   </div>
 
@@ -1368,114 +1998,353 @@ export default function OperationalHeartTestView({
                   )}
 
                   {activeOrder.status === 'ACTIVO' && (
-                    <div className="p-3 bg-[#39FF14]/10 border border-[#39FF14]/30 rounded-xl text-center space-y-1">
-                      <div className="flex items-center justify-center gap-2 text-xs font-mono text-[#39FF14] font-bold">
-                        <span className="w-2 h-2 rounded-full bg-[#39FF14] animate-ping"></span>
-                        <span>OPERACIÓN EN CURSO (ACTIVO)</span>
+                    <div className="space-y-3">
+                      <div className="p-3 bg-[#39FF14]/10 border border-[#39FF14]/30 rounded-xl text-center space-y-1">
+                        <div className="flex items-center justify-center gap-2 text-xs font-mono text-[#39FF14] font-bold">
+                          <span className="w-2 h-2 rounded-full bg-[#39FF14] animate-ping"></span>
+                          <span>OPERACIÓN EN CURSO (ACTIVO)</span>
+                        </div>
+                        <p className="text-[10px] font-mono text-gray-400">
+                          Transmitiendo posición continua al mapa del solicitante y la central.
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={() => handleFinalizeOrder(activeOrder.id)}
+                        disabled={finalizingOrder}
+                        className="w-full bg-[#39FF14] text-black hover:bg-[#32e012] py-3.5 rounded-xl font-mono text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 shadow-glow transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        <Check size={16} />
+                        <span>{finalizingOrder ? 'Finalizando y Retornando...' : 'Completar Entrega (Pasar a FINALIZADO)'}</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {finalizingOrder && (
+                    <div className="p-4 bg-black/90 border border-[#39FF14] rounded-xl text-center space-y-1 shadow-glow animate-pulse">
+                      <div className="text-xs font-mono font-bold text-[#39FF14]">
+                        ✓ OPERACIÓN FINALIZADA
                       </div>
                       <p className="text-[10px] font-mono text-gray-400">
-                        Transmitiendo posición continua al mapa del solicitante y la central.
+                        Persistencia confirmada. Retornando al Home del Motorizado...
                       </p>
                     </div>
                   )}
                 </div>
               )}
 
-              {/* Panel de Telemetría GPS Real del Teléfono */}
-              <div className="bg-black/80 border border-white/10 p-5 rounded-2xl space-y-4">
-                <div className="flex items-center justify-between border-b border-white/5 pb-3">
-                  <div className="flex items-center gap-2">
-                    <Crosshair size={16} className={gpsStatus === 'ACTIVE' ? 'text-[#39FF14] animate-spin' : 'text-gray-500'} />
-                    <h4 className="text-xs font-mono uppercase font-bold text-white">
-                      GPS Físico del Dispositivo
-                    </h4>
-                  </div>
-                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${
-                    gpsStatus === 'ACTIVE' ? 'bg-[#39FF14]/20 text-[#39FF14]' : 'bg-white/10 text-gray-400'
-                  }`}>
-                    {gpsStatus}
-                  </span>
-                </div>
+              {/* Selector de Fuente de Telemetría: Simulador Cockpit DEV vs GPS Físico */}
+              <div className="flex bg-white/5 border border-white/10 p-1 rounded-xl gap-1">
+                <button
+                  type="button"
+                  onClick={() => setTelemetryMode('SIMULATOR')}
+                  className={`flex-1 py-2 px-3 rounded-lg font-mono text-[11px] font-bold uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    telemetryMode === 'SIMULATOR'
+                      ? 'bg-[#39FF14] text-black shadow-glow'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <Zap size={13} />
+                  <span>Simulador de Ruta (Cockpit DEV)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTelemetryMode('PHYSICAL_GPS')}
+                  className={`flex-1 py-2 px-3 rounded-lg font-mono text-[11px] font-bold uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    telemetryMode === 'PHYSICAL_GPS'
+                      ? 'bg-[#39FF14] text-black shadow-glow'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <Crosshair size={13} />
+                  <span>GPS Físico Real</span>
+                </button>
+              </div>
 
-                {gpsErrorMessage && (
-                  <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-xs font-mono text-red-400">
-                    {gpsErrorMessage}
-                  </div>
-                )}
+              {/* MODO 1: SIMULADOR DE RUTA (COCKPIT DEV) */}
+              {telemetryMode === 'SIMULATOR' && (() => {
+                const simPoints = (activeOrder?.polylinePoints && activeOrder.polylinePoints.length > 0)
+                  ? activeOrder.polylinePoints
+                  : (routeData?.polylinePoints || []);
+                const simProgressPercent = simPoints.length > 1
+                  ? Math.min(100, Math.round((simCurrentIndex / (simPoints.length - 1)) * 1000) / 10)
+                  : 0;
+                const simRemainingMeters = computeRemainingPolylineDistance(simPoints, simCurrentIndex);
+                const simCurrentPt = simPoints[simCurrentIndex] || simPoints[0];
 
-                {realMotorizadoLocation ? (
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-white/5 p-3 rounded-xl border border-white/5">
-                        <div className="text-[10px] font-mono text-gray-500 uppercase">Latitud Actual</div>
-                        <div className="text-base font-black font-mono text-white mt-0.5">
-                          {realMotorizadoLocation.lat.toFixed(6)}
+                return (
+                  <div className="bg-black/80 border border-[#39FF14]/30 p-5 rounded-2xl space-y-4 shadow-xl">
+                    <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-full bg-[#39FF14] animate-pulse"></div>
+                        <div>
+                          <span className="text-[9px] font-mono text-[#39FF14] font-black uppercase tracking-widest block">
+                            COCKPIT DEV // TEST LOCAL 1 DISPOSITIVO
+                          </span>
+                          <h4 className="text-xs font-mono uppercase font-black text-white">
+                            Simulador de Movimiento de Ruta
+                          </h4>
                         </div>
                       </div>
-                      <div className="bg-white/5 p-3 rounded-xl border border-white/5">
-                        <div className="text-[10px] font-mono text-gray-500 uppercase">Longitud Actual</div>
-                        <div className="text-base font-black font-mono text-white mt-0.5">
-                          {realMotorizadoLocation.lng.toFixed(6)}
-                        </div>
-                      </div>
+                      <span className={`text-[10px] font-mono px-2.5 py-1 rounded font-bold uppercase tracking-wider ${
+                        simStatus === 'RUNNING'
+                          ? 'bg-[#39FF14]/20 text-[#39FF14] border border-[#39FF14]/40 animate-pulse'
+                          : simStatus === 'PAUSED'
+                          ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30'
+                          : simStatus === 'COMPLETED'
+                          ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                          : 'bg-white/10 text-gray-400 border border-white/10'
+                      }`}>
+                        {simStatus === 'RUNNING' ? 'EN RUTA' : simStatus === 'PAUSED' ? 'PAUSADO' : simStatus === 'COMPLETED' ? 'FINALIZADO' : 'DETENIDO'}
+                      </span>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-2 text-center text-xs font-mono">
-                      <div className="bg-white/5 p-2 rounded-lg">
-                        <span className="text-[9px] text-gray-500 block uppercase">Precisión</span>
-                        <span className="font-bold text-[#39FF14]">±{realMotorizadoLocation.accuracy.toFixed(1)}m</span>
-                      </div>
-                      <div className="bg-white/5 p-2 rounded-lg">
-                        <span className="text-[9px] text-gray-500 block uppercase">Pings GPS</span>
-                        <span className="font-bold text-white">{gpsUpdatesCount}</span>
-                      </div>
-                      <div className="bg-white/5 p-2 rounded-lg">
-                        <span className="text-[9px] text-gray-500 block uppercase">Último Ping</span>
-                        <span className="font-bold text-gray-300">{realMotorizadoLocation.timestamp}</span>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center py-4 text-xs font-mono text-gray-500">
-                    {gpsStatus === 'REQUESTING' ? (
-                      <div className="flex flex-col items-center gap-2">
-                        <RefreshCw size={20} className="animate-spin text-[#39FF14]" />
-                        <span>Esperando confirmación de permisos de ubicación...</span>
+                    {simPoints.length === 0 ? (
+                      <div className="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-xl space-y-2 text-center">
+                        <AlertCircle size={22} className="text-yellow-400 mx-auto" />
+                        <p className="text-xs font-mono text-yellow-200 font-bold">
+                          Polilínea no cargada
+                        </p>
+                        <p className="text-[11px] font-mono text-gray-300">
+                          Calcula una ruta en la pestaña Solicitante para cargar la polilínea de Google Directions.
+                        </p>
                       </div>
                     ) : (
-                      <span>GPS en espera. Presiona el botón para comenzar a transmitir tu posición real.</span>
+                      <>
+                        {/* Barra de Progreso de Recorrido */}
+                        <div className="space-y-1.5 bg-white/5 p-3 rounded-xl border border-white/5">
+                          <div className="flex items-center justify-between text-[11px] font-mono">
+                            <span className="text-gray-400 uppercase tracking-wider">Avance de Ruta</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[#39FF14] font-black text-xs">{simProgressPercent.toFixed(1)}%</span>
+                              <span className="text-gray-500 text-[10px]">({simCurrentIndex + 1}/{simPoints.length} pts)</span>
+                            </div>
+                          </div>
+                          <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-[#39FF14]/70 to-[#39FF14] transition-all duration-300"
+                              style={{ width: `${simProgressPercent}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Telemetría Actual en Vivo */}
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+                              <div className="text-[10px] font-mono text-gray-500 uppercase">Latitud Virtual</div>
+                              <div className="text-sm font-black font-mono text-white mt-0.5 truncate">
+                                {simCurrentPt ? simCurrentPt.lat.toFixed(6) : '0.000000'}
+                              </div>
+                            </div>
+                            <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+                              <div className="text-[10px] font-mono text-gray-500 uppercase">Longitud Virtual</div>
+                              <div className="text-sm font-black font-mono text-white mt-0.5 truncate">
+                                {simCurrentPt ? simCurrentPt.lng.toFixed(6) : '0.000000'}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-4 gap-2 text-center text-xs font-mono">
+                            <div className="bg-white/5 p-2 rounded-lg">
+                              <span className="text-[9px] text-gray-500 block uppercase">Dist. Restante</span>
+                              <span className="font-bold text-[#39FF14]">
+                                {simRemainingMeters >= 1000 ? `${(simRemainingMeters / 1000).toFixed(2)} km` : `${Math.round(simRemainingMeters)} m`}
+                              </span>
+                            </div>
+                            <div className="bg-white/5 p-2 rounded-lg">
+                              <span className="text-[9px] text-gray-500 block uppercase">Rumbo</span>
+                              <span className="font-bold text-white">{simHeadingRef.current}°</span>
+                            </div>
+                            <div className="bg-white/5 p-2 rounded-lg">
+                              <span className="text-[9px] text-gray-500 block uppercase">Vel. Aprox.</span>
+                              <span className="font-bold text-white">
+                                {simStatus === 'RUNNING' ? `${Math.round(25 * simSpeedMultiplier)} km/h` : '0 km/h'}
+                              </span>
+                            </div>
+                            <div className="bg-white/5 p-2 rounded-lg">
+                              <span className="text-[9px] text-gray-500 block uppercase">Precisión</span>
+                              <span className="font-bold text-[#39FF14]">±3.0m</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Selector de Velocidad Multiplicadora (1x, 2x, 4x) */}
+                        <div className="bg-white/5 p-2.5 rounded-xl border border-white/5 flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-mono text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                            <FastForward size={12} className="text-[#39FF14]" />
+                            Velocidad de Avance:
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            {([1, 2, 4] as const).map(speed => (
+                              <button
+                                key={speed}
+                                type="button"
+                                onClick={() => handleChangeSpeed(speed)}
+                                className={`px-3 py-1 rounded-lg font-mono text-xs font-black transition-all cursor-pointer ${
+                                  simSpeedMultiplier === speed
+                                    ? 'bg-[#39FF14] text-black shadow-glow'
+                                    : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
+                                }`}
+                              >
+                                {speed}×
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Botones de Control del Simulador */}
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          {simStatus === 'RUNNING' ? (
+                            <button
+                              type="button"
+                              onClick={handlePauseSimulation}
+                              className="bg-yellow-500 text-black hover:bg-yellow-400 font-mono text-xs font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-glow cursor-pointer"
+                            >
+                              <Pause size={15} />
+                              <span>Pausar</span>
+                            </button>
+                          ) : simStatus === 'PAUSED' ? (
+                            <button
+                              type="button"
+                              onClick={handleResumeSimulation}
+                              className="bg-[#39FF14] text-black hover:bg-[#32e012] font-mono text-xs font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-glow cursor-pointer"
+                            >
+                              <Play size={15} />
+                              <span>Reanudar</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startRouteSimulation(0)}
+                              className="bg-[#39FF14] text-black hover:bg-[#32e012] font-mono text-xs font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-glow cursor-pointer"
+                            >
+                              <Play size={15} />
+                              <span>{simStatus === 'COMPLETED' ? 'Reiniciar Ruta' : 'Iniciar Simulación'}</span>
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={handleRestartSimulation}
+                            disabled={simCurrentIndex === 0 && simStatus === 'IDLE'}
+                            className={`font-mono text-xs font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all ${
+                              simCurrentIndex === 0 && simStatus === 'IDLE'
+                                ? 'bg-white/5 text-gray-600 border border-white/5 cursor-not-allowed'
+                                : 'bg-white/10 hover:bg-white/20 text-white border border-white/10 cursor-pointer'
+                            }`}
+                          >
+                            <RotateCcw size={14} />
+                            <span>Punto 0 (A)</span>
+                          </button>
+                        </div>
+
+                        <p className="text-[10px] font-mono text-gray-500 leading-tight">
+                          Recorre la polilínea real de Google Directions alimentando <code className="text-[#39FF14]">updateOperationTelemetry()</code>. Mutuamente excluyente con el GPS físico.
+                        </p>
+                      </>
                     )}
                   </div>
-                )}
+                );
+              })()}
 
-                {/* Botones de Control de GPS */}
-                <div className="grid grid-cols-2 gap-2 pt-2">
-                  {gpsStatus !== 'ACTIVE' ? (
-                    <button
-                      onClick={startRealDeviceGPS}
-                      className="bg-[#39FF14] text-black font-mono text-xs font-bold py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-[#32e012] transition-all shadow-glow"
-                    >
-                      <Play size={14} />
-                      <span>Activar GPS Real</span>
-                    </button>
-                  ) : (
-                    <button
-                      onClick={stopRealDeviceGPS}
-                      className="bg-red-500/20 text-red-400 border border-red-500/30 font-mono text-xs font-bold py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-red-500/30 transition-all"
-                    >
-                      <span>Detener GPS</span>
-                    </button>
+              {/* MODO 2: GPS FÍSICO REAL DEL TELÉFONO */}
+              {telemetryMode === 'PHYSICAL_GPS' && (
+                <div className="bg-black/80 border border-white/10 p-5 rounded-2xl space-y-4">
+                  <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Crosshair size={16} className={gpsStatus === 'ACTIVE' ? 'text-[#39FF14] animate-spin' : 'text-gray-500'} />
+                      <h4 className="text-xs font-mono uppercase font-bold text-white">
+                        GPS Físico del Dispositivo
+                      </h4>
+                    </div>
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${
+                      gpsStatus === 'ACTIVE' ? 'bg-[#39FF14]/20 text-[#39FF14]' : 'bg-white/10 text-gray-400'
+                    }`}>
+                      {gpsStatus}
+                    </span>
+                  </div>
+
+                  {gpsErrorMessage && (
+                    <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-xs font-mono text-red-400">
+                      {gpsErrorMessage}
+                    </div>
                   )}
 
-                  <button
-                    onClick={forceSingleGpsReading}
-                    className="bg-white/10 hover:bg-white/20 text-white font-mono text-xs font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all"
-                  >
-                    <RefreshCw size={14} />
-                    <span>Ping Manual</span>
-                  </button>
+                  {realMotorizadoLocation ? (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+                          <div className="text-[10px] font-mono text-gray-500 uppercase">Latitud Actual</div>
+                          <div className="text-base font-black font-mono text-white mt-0.5">
+                            {realMotorizadoLocation.lat.toFixed(6)}
+                          </div>
+                        </div>
+                        <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+                          <div className="text-[10px] font-mono text-gray-500 uppercase">Longitud Actual</div>
+                          <div className="text-base font-black font-mono text-white mt-0.5">
+                            {realMotorizadoLocation.lng.toFixed(6)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 text-center text-xs font-mono">
+                        <div className="bg-white/5 p-2 rounded-lg">
+                          <span className="text-[9px] text-gray-500 block uppercase">Precisión</span>
+                          <span className="font-bold text-[#39FF14]">±{realMotorizadoLocation.accuracy.toFixed(1)}m</span>
+                        </div>
+                        <div className="bg-white/5 p-2 rounded-lg">
+                          <span className="text-[9px] text-gray-500 block uppercase">Pings GPS</span>
+                          <span className="font-bold text-white">{gpsUpdatesCount}</span>
+                        </div>
+                        <div className="bg-white/5 p-2 rounded-lg">
+                          <span className="text-[9px] text-gray-500 block uppercase">Último Ping</span>
+                          <span className="font-bold text-gray-300">{realMotorizadoLocation.timestamp}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-4 text-xs font-mono text-gray-500">
+                      {gpsStatus === 'REQUESTING' ? (
+                        <div className="flex flex-col items-center gap-2">
+                          <RefreshCw size={20} className="animate-spin text-[#39FF14]" />
+                          <span>Esperando confirmación de permisos de ubicación...</span>
+                        </div>
+                      ) : (
+                        <span>GPS en espera. Presiona el botón para comenzar a transmitir tu posición real.</span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Botones de Control de GPS */}
+                  <div className="grid grid-cols-2 gap-2 pt-2">
+                    {gpsStatus !== 'ACTIVE' ? (
+                      <button
+                        onClick={startRealDeviceGPS}
+                        className="bg-[#39FF14] text-black font-mono text-xs font-bold py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-[#32e012] transition-all shadow-glow cursor-pointer"
+                      >
+                        <Play size={14} />
+                        <span>Activar GPS Real</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={stopRealDeviceGPS}
+                        className="bg-red-500/20 text-red-400 border border-red-500/30 font-mono text-xs font-bold py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-red-500/30 transition-all cursor-pointer"
+                      >
+                        <span>Detener GPS</span>
+                      </button>
+                    )}
+
+                    <button
+                      onClick={forceSingleGpsReading}
+                      className="bg-white/10 hover:bg-white/20 text-white font-mono text-xs font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer"
+                    >
+                      <RefreshCw size={14} />
+                      <span>Ping Manual</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
@@ -1512,6 +2381,12 @@ export default function OperationalHeartTestView({
                         <span>Tiempo estimado:</span>
                         <strong className="text-[#39FF14]">{activeOrder.durationText}</strong>
                       </div>
+                      {activeOrder.protectedPrice !== undefined && (
+                        <div className="flex items-center justify-between text-gray-400 text-[11px]">
+                          <span>Tarifa acordada:</span>
+                          <strong className="text-[#39FF14] font-black">S/ {activeOrder.protectedPrice.toFixed(2)}</strong>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1627,18 +2502,17 @@ export default function OperationalHeartTestView({
                     </AdvancedMarker>
                   )}
 
-                  {/* Marcador en Vivo del Motorizado con GPS Físico */}
+                  {/* Marcador Oficial de Unidad ZÉNITH: ÁGUILA IMPERIAL + ZÉNITH */}
                   {realMotorizadoLocation && (
                     <AdvancedMarker
                       position={{ lat: realMotorizadoLocation.lat, lng: realMotorizadoLocation.lng }}
-                      title={`Motorizado en Vivo: ±${realMotorizadoLocation.accuracy.toFixed(1)}m`}
+                      title={`Unidad Zénith en Vivo: ±${realMotorizadoLocation.accuracy.toFixed(1)}m`}
                     >
-                      <div className="relative flex items-center justify-center">
-                        <div className="absolute -inset-3 bg-[#39FF14] rounded-full blur-md opacity-70 animate-pulse"></div>
-                        <div className="w-10 h-10 rounded-full bg-black border-2 border-[#39FF14] text-[#39FF14] flex items-center justify-center shadow-2xl z-10">
-                          <Car size={18} className="stroke-[2.5]" />
-                        </div>
-                      </div>
+                      <ZenithImperialEagleMarker
+                        size={52}
+                        heading={realMotorizadoLocation.heading}
+                        title={`Unidad Zénith: ±${realMotorizadoLocation.accuracy.toFixed(1)}m`}
+                      />
                     </AdvancedMarker>
                   )}
                 </Map>
@@ -1655,10 +2529,70 @@ export default function OperationalHeartTestView({
                   </p>
                 </div>
                 <p className="text-[9px] font-mono text-gray-400">
-                  {routeData ? `${routeData.polylinePoints.length} Puntos de Ruta Real` : 'Esperando trazo de ruta'}
+                  {(activeOrder?.polylinePoints && activeOrder.polylinePoints.length > 0)
+                    ? `${activeOrder.polylinePoints.length} Puntos de Ruta Real`
+                    : routeData
+                    ? `${routeData.polylinePoints.length} Puntos de Ruta Real`
+                    : 'Esperando trazo de ruta'}
                 </p>
               </div>
             </div>
+
+            {/* Overlay HUD Superior Derecha: Mini Cockpit de Simulación */}
+            {(simStatus === 'RUNNING' || simStatus === 'PAUSED' || simStatus === 'COMPLETED') && (() => {
+              const hudPoints = (activeOrder?.polylinePoints && activeOrder.polylinePoints.length > 0)
+                ? activeOrder.polylinePoints
+                : (routeData?.polylinePoints || []);
+              const hudProgress = hudPoints.length > 1
+                ? Math.min(100, Math.round((simCurrentIndex / (hudPoints.length - 1)) * 1000) / 10)
+                : 0;
+
+              return (
+                <div className="absolute top-4 right-4 z-10">
+                  <div className="bg-black/90 backdrop-blur-md px-3.5 py-2 border border-[#39FF14]/40 rounded-xl shadow-2xl flex items-center gap-2.5 font-mono text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${simStatus === 'RUNNING' ? 'bg-[#39FF14] animate-ping' : simStatus === 'PAUSED' ? 'bg-yellow-400' : 'bg-blue-400'}`}></span>
+                      <span className="text-white font-bold text-[10px]">SIMULADOR:</span>
+                      <span className="text-[#39FF14] font-black text-xs">
+                        {hudProgress.toFixed(1)}%
+                      </span>
+                      <span className="text-gray-400 text-[10px]">({simSpeedMultiplier}×)</span>
+                    </div>
+                    <div className="flex items-center gap-1 pl-1 border-l border-white/10">
+                      {simStatus === 'RUNNING' ? (
+                        <button
+                          type="button"
+                          onClick={handlePauseSimulation}
+                          className="px-2 py-1 rounded bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 transition-all text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                          title="Pausar simulador"
+                        >
+                          <Pause size={10} />
+                          <span>Pausar</span>
+                        </button>
+                      ) : simStatus === 'PAUSED' ? (
+                        <button
+                          type="button"
+                          onClick={handleResumeSimulation}
+                          className="px-2 py-1 rounded bg-[#39FF14]/20 text-[#39FF14] hover:bg-[#39FF14]/30 transition-all text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                          title="Reanudar simulador"
+                        >
+                          <Play size={10} />
+                          <span>Reanudar</span>
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={handleRestartSimulation}
+                        className="px-2 py-1 rounded bg-white/10 text-gray-300 hover:bg-white/20 transition-all text-[10px] flex items-center gap-1 cursor-pointer"
+                        title="Reiniciar simulador al inicio"
+                      >
+                        <RotateCcw size={10} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Overlay HUD Inferior Derecha: Telemetría Rápida */}
             {realMotorizadoLocation && (
@@ -1687,17 +2621,43 @@ export default function OperationalHeartTestView({
                 <strong>Prueba Física:</strong> Abre esta pantalla en tu teléfono, activa el GPS del Motorizado y camina para ver el marcador moverse en vivo.
               </span>
             </div>
-            {onClose && (
+            {(onReturnHome || onClose) && (
               <button
-                onClick={onClose}
-                className="text-xs font-mono text-gray-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/10 shrink-0"
+                onClick={onReturnHome || onClose}
+                className="text-xs font-mono text-[#39FF14] hover:text-white px-3 py-1.5 rounded-lg border border-[#39FF14]/30 hover:bg-[#39FF14]/10 shrink-0 transition-all cursor-pointer font-bold"
               >
-                Cerrar Modo Prueba
+                Volver al Home
               </button>
             )}
           </div>
         </div>
       </div>
+
+      {/* Modal Completo de Creación de Operación Zénith */}
+      {showCreationModal && (
+        <ZenithOrderCreationModal
+          user={{
+            ...TEST_ACTORS.SOLICITANTE,
+            uid: auth.currentUser?.uid || currentTestUid || TEST_ACTORS.SOLICITANTE.uid,
+            email: auth.currentUser?.email || 'solicitante@zenith.pe'
+          } as any}
+          initialOrigin={originCoords ? { address: originCoords.address, lat: originCoords.lat, lng: originCoords.lng } : (originInput ? { address: originInput, lat: -8.11189, lng: -79.02875 } : undefined)}
+          initialDestination={destCoords ? { address: destCoords.address, lat: destCoords.lat, lng: destCoords.lng } : (destInput ? { address: destInput, lat: -8.0988, lng: -79.0435 } : undefined)}
+          onClose={() => setShowCreationModal(false)}
+          onOrderCreated={(orderId, order) => {
+            setShowCreationModal(false);
+            setActiveOrderId(orderId);
+            setOrderCreatedSuccess(true);
+            if (order) {
+              setOriginInput(order.originAddress);
+              setDestInput(order.destinationAddress);
+              setOriginCoords({ address: order.originAddress, lat: order.originLat, lng: order.originLng });
+              setDestCoords({ address: order.destinationAddress, lat: order.destLat, lng: order.destLng });
+              setMapCenter({ lat: order.originLat, lng: order.originLng });
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

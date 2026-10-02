@@ -2,7 +2,7 @@ import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firest
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { db, auth, assertSandboxIsolated } from '../firebase/config';
-import { User, UserRole } from '../types';
+import { User, UserRole, DocumentStatus } from '../types';
 import {
   createDraftOrder,
   publishOrder,
@@ -36,7 +36,38 @@ export const VIRTUAL_SANDBOX_USERS = {
     activeRole: UserRole.DRIVER,
     rolesEnabled: [UserRole.DRIVER] as (UserRole | 'CLIENTE' | 'MOTORIZADO')[],
     rating: 5.0,
-    isVirtual: true
+    isVirtual: true,
+    driverProfile: {
+      status: DocumentStatus.APPROVED,
+      availability: true,
+      rating: 5.0,
+      appVersion: '2.4.0-SANDBOX',
+      vehicle: {
+        category: 'Zenith Standard',
+        plate: 'VIRT-999-SBX',
+        brand: 'Honda',
+        model: 'Wave 110 Virtual',
+        year: 2024,
+        color: 'Negro Sandbox'
+      },
+      documentation: {
+        licenseNumber: 'SANDBOX-MTC-001',
+        licenseExpiry: '2030-12-31'
+      }
+    },
+    wallet: {
+      availableBalance: 50.00,
+      digitalBalance: 50.00,
+      retainedBalance: 0.00,
+      cashDebt: 0.00,
+      pendingSettlement: 0.00,
+      accumulatedCommission: 0.00,
+      dailyEarnings: 0.00,
+      weeklyEarnings: 0.00,
+      movements: [],
+      todaySettlements: 0,
+      nextSettlementDate: '2026-10-01T00:00:00.000Z'
+    }
   },
   // Segundo motorizado para pruebas reales de concurrencia
   MOTORIZADO_02: {

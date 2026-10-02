@@ -1,6 +1,5 @@
 import { LoggingService } from './LoggingService';
-import { db } from '../firebase/config';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { auth } from '../firebase/config';
 import { ObservabilityService } from './ObservabilityService';
 
 export interface AuditRecord {
@@ -24,11 +23,22 @@ export class AuditEngineClass implements IAuditEngine {
    */
   async logEvent(record: AuditRecord): Promise<boolean> {
     try {
+      const user = auth.currentUser;
+      if (!user) {
+        LoggingService.warn('AUDIT_ENGINE', 'No hay sesión de usuario activa para registrar evento de auditoría.');
+        return false;
+      }
+
+      const idToken = await user.getIdToken();
+
       LoggingService.info('AUDIT_ENGINE', `Registrando auditoría de tipo ${record.eventType} [${record.severity}] vía Backend`);
       
       const res = await fetch('/api/audit/log', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer DUMMY_TOKEN_UNTIL_AUTH_IS_WIRED_ON_FRONTEND` },
+        headers: { 
+          'Content-Type': 'application/json', 
+          'Authorization': `Bearer ${idToken}` 
+        },
         body: JSON.stringify(record)
       });
       

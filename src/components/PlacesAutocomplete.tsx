@@ -7,6 +7,7 @@ interface PlacesAutocompleteProps {
   placeholder: string;
   value: string;
   onLocationSelect: (location: Location) => void;
+  onChangeText?: (text: string) => void;
   icon: React.ReactNode;
   locationBias?: google.maps.LatLngLiteral;
 }
@@ -15,6 +16,7 @@ export default function PlacesAutocomplete({
   placeholder,
   value,
   onLocationSelect,
+  onChangeText,
   icon,
   locationBias
 }: PlacesAutocompleteProps) {
@@ -55,6 +57,7 @@ export default function PlacesAutocomplete({
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const text = e.target.value;
     setInputValue(text);
+    onChangeText?.(text);
     
     if (!text.trim()) {
       setPredictions([]);

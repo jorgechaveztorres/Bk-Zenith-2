@@ -4,6 +4,7 @@ import { Ride } from '../../types';
 import { Assignment } from '../../services/AssignmentRepository';
 import { DispatchEngine } from '../../services/DispatchEngine';
 import { AssignmentRepository } from '../../services/AssignmentRepository';
+import { RideClientService } from '../../services/RideClientService';
 
 interface RideAssignmentCardProps {
   assignment: Assignment;
@@ -54,6 +55,7 @@ export default function RideAssignmentCard({ assignment, ride, onProcessed }: Ri
     if (processing) return;
     setProcessing(true);
     try {
+      await RideClientService.acceptRide(ride.id);
       await AssignmentRepository.acceptAssignment(assignment.assignmentId);
       onProcessed();
     } catch (err) {

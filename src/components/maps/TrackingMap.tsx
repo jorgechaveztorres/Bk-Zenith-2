@@ -9,6 +9,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { APIProvider, Map, AdvancedMarker, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
 import { API_KEY, DARK_MAP_STYLE, hasValidKey } from '../MapContainer';
 import { MapPin, Navigation, Compass, Shield, Maximize2 } from 'lucide-react';
+import ZenithImperialEagleMarker from './ZenithImperialEagleMarker';
 
 interface TrackingMapProps {
   passengerLoc: { lat: number; lng: number; address?: string };
@@ -263,19 +264,14 @@ export default function TrackingMap({
             </div>
           </AdvancedMarker>
 
-          {/* Active Driver Vehicle Marker */}
+          {/* Marcador Oficial de Unidad ZÉNITH: ÁGUILA IMPERIAL + ZÉNITH */}
           {driverLoc && (
-            <AdvancedMarker position={driverLoc} title="Conductor en Tránsito">
-              <div 
-                className="relative flex items-center justify-center transition-all duration-500 ease-out"
-                style={{ transform: `rotate(${heading}deg)` }}
-              >
-                {/* Real-time radar shadow waves */}
-                <div className="absolute -inset-3 rounded-full blur bg-[#39FF14]/20 animate-ping" style={{ animationDuration: '2s' }}></div>
-                <div className="w-8 h-8 rounded-full border border-white/20 bg-black text-[#39FF14] flex items-center justify-center shadow-2xl relative z-10">
-                  <Navigation size={16} className="stroke-[2.5]" />
-                </div>
-              </div>
+            <AdvancedMarker position={driverLoc} title="Unidad Zénith en Tránsito">
+              <ZenithImperialEagleMarker
+                size={48}
+                heading={heading}
+                title="Unidad Zénith en Tránsito"
+              />
             </AdvancedMarker>
           )}
         </Map>

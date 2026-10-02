@@ -30,8 +30,10 @@ import { NotificationService } from '../../services/NotificationService';
 import { DriverPresenceService } from '../../services/DriverPresenceService';
 import { Assignment } from '../../services/AssignmentRepository';
 import RideAssignmentCard from './RideAssignmentCard';
+import { RideClientService } from '../../services/RideClientService';
 import { WalletService } from '../../services/WalletService';
 import { SettlementEngine } from '../../services/SettlementEngine';
+import { DriverTopupModal } from './DriverTopupModal';
 
 interface DriverDashboardProps {
   user: User;
@@ -54,8 +56,9 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
   const [settling, setSettling] = useState(false);
   const [reloadAmount, setReloadAmount] = useState<number>(30);
   const [reloadingWallet, setReloadingWallet] = useState(false);
+  const [showTopupModal, setShowTopupModal] = useState(false);
 
-  // Load Wallet
+  // Load Wallet & Subscribe to real-time updates
   const loadWallet = async () => {
     try {
       const w = await WalletService.getOrCreateWallet(user.uid);
@@ -67,6 +70,14 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
 
   useEffect(() => {
     loadWallet();
+    const unsub = onSnapshot(doc(db, 'wallets', user.uid), (snap) => {
+      if (snap.exists()) {
+        setDriverWallet(snap.data());
+      }
+    }, (err) => {
+      console.warn("[ZENITH-DASHBOARD] Real-time wallet listener fallback to API:", err);
+    });
+    return () => unsub();
   }, [user.uid]);
 
   // Simulación de Hardware del Operador (Hardware Control Cockpit para pruebas)
@@ -194,13 +205,7 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
   const handleAcceptRide = async (ride: Ride) => {
     setLoading(true);
     try {
-      await setDoc(doc(db, 'rides', ride.id), {
-        status: RideStatus.DRIVER_ASSIGNED,
-        driverId: user.uid,
-        driverName: user.fullName,
-        finalPrice: ride.protectedPrice,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
+      await RideClientService.acceptRide(ride.id);
       await NotificationService.notifyRideAccepted(ride.passengerId, user.uid, ride.passengerName, user.fullName, ride.protectedPrice);
     } catch (error) {
       console.error("[Dashboard] Error accepting ride:", error);
@@ -295,13 +300,73 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
         </div>
       )}
 
+      {/* ===================================================================== */}
+      {/* WALLET ZÉNITH — SECCIÓN PRINCIPAL DE SALDO Y RECARGA (PILOTO TOP-UP V1) */}
+      {/* ===================================================================== */}
+      <div className="bg-gradient-to-r from-neutral-950 via-neutral-900 to-black border border-[#39FF14]/30 rounded-3xl p-6 shadow-2xl relative overflow-hidden text-left">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-[#39FF14]/5 rounded-full blur-3xl pointer-events-none -mr-16 -mt-16" />
+
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 relative z-10">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-[#39FF14]/10 border border-[#39FF14]/30 flex items-center justify-center text-[#39FF14]">
+                <Wallet size={16} />
+              </div>
+              <h3 className="text-sm font-mono font-black uppercase tracking-wider text-white">
+                WALLET ZÉNITH
+              </h3>
+              <span className={`text-[9px] font-mono font-black px-2.5 py-0.5 rounded-full border uppercase ${
+                (driverWallet?.availableBalance ?? balance) > 0
+                  ? 'bg-[#39FF14]/10 text-[#39FF14] border-[#39FF14]/30'
+                  : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+              }`}>
+                {(driverWallet?.availableBalance ?? balance) > 0 ? 'ACTIVO · PREPAGO 13%' : 'RECARGA REQUERIDA'}
+              </span>
+            </div>
+
+            <div>
+              <p className="text-[10px] font-mono text-gray-400 uppercase tracking-widest">
+                Saldo Disponible
+              </p>
+              <div className="flex items-baseline gap-2 mt-0.5">
+                <span className="text-3xl sm:text-4xl font-black text-[#39FF14] tracking-tight font-mono">
+                  S/ {(driverWallet?.availableBalance !== undefined ? driverWallet.availableBalance : balance).toFixed(2)}
+                </span>
+                <span className="text-xs font-mono text-gray-500 uppercase">PEN</span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-gray-400 max-w-xl leading-relaxed">
+              Fondo operativo de prepago para deducción de comisión del 13% en viajes y servicios completados.
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowWalletDetails(!showWalletDetails)}
+              className="px-4 py-3 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-2xl font-mono text-xs uppercase font-bold tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <RefreshCw size={14} className={showWalletDetails ? 'rotate-180 transition-transform' : ''} />
+              {showWalletDetails ? 'Ocultar Centro Financiero' : 'Ver Centro Financiero'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowTopupModal(true)}
+              className="px-6 py-3 bg-[#39FF14] hover:bg-[#32e012] text-black font-black uppercase text-xs tracking-wider rounded-2xl font-mono shadow-lg shadow-[#39FF14]/20 hover:scale-[1.02] transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <DollarSign size={16} className="text-black" />
+              RECARGAR
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Metrics Row */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {/* Wallet Balance Card - Interactive */}
-        <button 
-          onClick={() => setShowWalletDetails(!showWalletDetails)}
-          className="bg-neutral-900 border border-white/5 rounded-2xl p-4 flex items-center justify-between hover:border-[#39FF14]/30 hover:bg-neutral-900/80 transition-all text-left w-full cursor-pointer focus:outline-none"
-        >
+        <div className="bg-neutral-900 border border-white/5 rounded-2xl p-4 flex items-center justify-between hover:border-[#39FF14]/30 transition-all text-left w-full">
           <div>
             <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest block flex items-center gap-1">
               <Wallet size={10} className="text-[#39FF14]" />
@@ -310,12 +375,24 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
             <span className="text-2xl font-black text-[#39FF14] mt-1 block">
               S/ {(driverWallet?.availableBalance !== undefined ? driverWallet.availableBalance : balance).toFixed(2)}
             </span>
-            <span className="text-[9px] font-mono text-gray-400 underline decoration-dotted">Ver centro financiero</span>
+            <button 
+              type="button"
+              onClick={() => setShowWalletDetails(!showWalletDetails)}
+              className="text-[9px] font-mono text-gray-400 underline decoration-dotted hover:text-white mt-1 cursor-pointer block"
+            >
+              {showWalletDetails ? 'Ocultar centro financiero' : 'Ver centro financiero'}
+            </button>
           </div>
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${showWalletDetails ? 'bg-[#39FF14] text-black' : 'bg-[#39FF14]/10 text-[#39FF14]'}`}>
-            <DollarSign size={20} />
+          <div className="flex flex-col items-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowTopupModal(true)}
+              className="px-3 py-1.5 bg-[#39FF14]/15 hover:bg-[#39FF14] text-[#39FF14] hover:text-black border border-[#39FF14]/40 rounded-xl text-[10px] font-mono font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1"
+            >
+              <DollarSign size={12} /> RECARGAR
+            </button>
           </div>
-        </button>
+        </div>
 
         {/* Rating Card */}
         <div className="bg-neutral-900 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
@@ -431,44 +508,26 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
                 </div>
               </div>
 
-              {/* Yape Top Up Console */}
-              <div className="bg-neutral-950/80 border border-white/5 rounded-2xl p-5 space-y-4">
-                <h5 className="text-[10px] font-mono font-black text-[#39FF14] uppercase tracking-wider flex items-center gap-1.5">
-                  <Lock size={12} /> Recarga de Billetera Vía Yape/Plin
-                </h5>
+              {/* Yape Top Up Console V1 (Piloto Oficial) */}
+              <div className="bg-neutral-950/80 border border-purple-500/20 rounded-2xl p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h5 className="text-[10px] font-mono font-black text-purple-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Lock size={12} /> Recarga de Wallet · Yape Personal (Piloto V1)
+                  </h5>
+                  <span className="text-[9px] font-mono bg-purple-500/10 text-purple-300 border border-purple-500/20 px-2 py-0.5 rounded-full">
+                    Prepago Estricto
+                  </span>
+                </div>
                 <p className="text-[11px] text-gray-400">
-                  Pague sus deudas de efectivo o recargue su saldo directamente desde su billetera digital Yape o Plin.
+                  Recargue su saldo disponible para comisiones (13%) mediante transferencia Yape con código de referencia único y verificación real.
                 </p>
                 
-                <div className="flex gap-2">
-                  {[10, 20, 50, 100].map((amt) => (
-                    <button
-                      key={amt}
-                      onClick={() => setReloadAmount(amt)}
-                      className={`flex-1 py-2 text-xs font-mono font-bold rounded-lg border cursor-pointer transition-all ${reloadAmount === amt ? 'bg-[#39FF14] border-[#39FF14] text-black' : 'bg-black border-white/10 text-white hover:border-white/20'}`}
-                    >
-                      S/ {amt}
-                    </button>
-                  ))}
-                </div>
                 <button
-                  disabled={reloadingWallet}
-                  onClick={async () => {
-                    setReloadingWallet(true);
-                    try {
-                      await WalletService.depositFunds(user.uid, reloadAmount, 'Yape/Plin');
-                      await loadWallet();
-                      alert(`Se han recargado S/ ${reloadAmount}.00 exitosamente a su billetera.`);
-                    } catch (e) {
-                      console.error(e);
-                      alert('Error al recargar.');
-                    } finally {
-                      setReloadingWallet(false);
-                    }
-                  }}
-                  className="w-full bg-[#39FF14]/10 hover:bg-[#39FF14]/20 text-[#39FF14] border border-[#39FF14]/20 hover:border-[#39FF14]/40 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest font-mono cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                  type="button"
+                  onClick={() => setShowTopupModal(true)}
+                  className="w-full bg-purple-600 hover:bg-purple-500 text-white border border-purple-500/40 py-3 rounded-xl text-xs font-black uppercase tracking-wider font-mono cursor-pointer transition-all flex items-center justify-center gap-2 shadow-lg shadow-purple-600/20"
                 >
-                  {reloadingWallet ? 'Cargando...' : `Recargar S/ ${reloadAmount}.00`}
+                  <Lock size={14} /> Iniciar Recarga Vía Yape
                 </button>
               </div>
 
@@ -668,6 +727,15 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
         </div>
       )}
 
+      {/* Modal Oficial de Recarga V1 — Piloto Yape Personal */}
+      <DriverTopupModal
+        isOpen={showTopupModal}
+        onClose={() => setShowTopupModal(false)}
+        onSuccess={() => {
+          loadWallet();
+        }}
+        currentBalance={driverWallet?.availableBalance || 0}
+      />
     </div>
   );
 }

@@ -8,13 +8,15 @@
 import { useEffect, useState } from 'react';
 import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, limit } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import { Ride, RideStatus, User, Location } from '../types';
+import { Ride, RideStatus, User, Location, SolicitudeStatus, TransitStatus, DeliveryStatus, CustodyStatus } from '../types';
 import { NotificationService } from '../services/NotificationService';
 import MapContainer from './MapContainer';
 import TrackingMap from './maps/TrackingMap';
 import PassengerActiveTripHUD from './PassengerActiveTripHUD';
 import PlacesAutocomplete from './PlacesAutocomplete';
 import { calculatePricing, PricingResult } from '../utils/pricingEngine';
+import { PricingService } from '../services/PricingService';
+import { RideClientService } from '../services/RideClientService';
 import Chat from './Chat';
 import ShareRide from './ShareRide';
 import SOSButton from './SOSButton';
@@ -37,7 +39,6 @@ import {
   Activity
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { DispatchEngine } from '../services/DispatchEngine';
 import { WalletService } from '../services/WalletService';
 import { PaymentEngine, PaymentMethodDetails } from '../services/PaymentEngine';
 import { TransactionEngine } from '../services/TransactionEngine';
@@ -196,26 +197,6 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
     loadPassengerFinancials();
   }, [user.uid]);
 
-  // Sincronizador en background del motor de despacho (Simulador de Backend Serverless)
-  useEffect(() => {
-    if (!activeRide) return;
-    if (activeRide.status !== RideStatus.SEARCHING_DRIVER && activeRide.status !== RideStatus.REQUESTED) return;
-
-    // Ejecución inicial reactiva del motor de asignación inteligente
-    DispatchEngine.runDispatchCycle(activeRide.id).catch(err => {
-      console.warn('Error en ciclo inicial de despacho:', err);
-    });
-
-    // Tasa periódica de 4 segundos para validar timeouts de 15s y gatillar reasignación autónoma
-    const interval = setInterval(() => {
-      DispatchEngine.runDispatchCycle(activeRide.id).catch(err => {
-        console.warn('Error en ciclo periódico de reasignación:', err);
-      });
-    }, 4000);
-
-    return () => clearInterval(interval);
-  }, [activeRide?.id, activeRide?.status]);
-
   // 1. Listen for active rides (including 'completed' to capture trip finalization)
   useEffect(() => {
     const q = query(
@@ -268,16 +249,53 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
 
     try {
       setPipelineStep('calculating');
-      await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      const calculated = calculatePricing(
-        origin.lat,
-        origin.lng,
-        destination.lat,
-        destination.lng,
-        origin.address,
-        destination.address
-      );
+      // Intentar obtener la distancia vial real de Google Directions si está disponible
+      let distanceKm: number | undefined;
+      let durationMin: number | undefined;
+
+      if (typeof window !== 'undefined' && window.google?.maps?.DirectionsService) {
+        try {
+          const directionsService = new window.google.maps.DirectionsService();
+          const routeResult = await new Promise<google.maps.DirectionsResult | null>((resolve) => {
+            directionsService.route(
+              {
+                origin: { lat: origin.lat, lng: origin.lng },
+                destination: { lat: destination.lat, lng: destination.lng },
+                travelMode: window.google.maps.TravelMode.DRIVING
+              },
+              (result, status) => {
+                if (status === window.google.maps.DirectionsStatus.OK && result) {
+                  resolve(result);
+                } else {
+                  resolve(null);
+                }
+              }
+            );
+          });
+
+          const leg = routeResult?.routes?.[0]?.legs?.[0];
+          if (leg?.distance?.value !== undefined && leg?.duration?.value !== undefined) {
+            distanceKm = leg.distance.value / 1000;
+            durationMin = leg.duration.value / 60;
+          }
+        } catch (routeErr) {
+          console.warn('[ZENITH-PASSENGER] Fallback a Haversine por indisponibilidad de Directions:', routeErr);
+        }
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 800));
+
+      // Solicitar cotización oficial server-side gobernada por el motor DPE V2
+      const calculated = await PricingService.requestQuote({
+        originLat: origin.lat,
+        originLng: origin.lng,
+        destLat: destination.lat,
+        destLng: destination.lng,
+        originAddress: origin.address,
+        destAddress: destination.address,
+        durationMin: durationMin
+      });
       setPricing(calculated);
       setPaymentError(null);
       setPaymentSuccess(null);
@@ -329,31 +347,46 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
       }
 
       setPipelineStep('creating_ride');
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 800));
 
-      // 3. Create the ride document with real payment information
-      const newRideDoc = await addDoc(collection(db, 'rides'), {
-        passengerId: user.uid,
-        passengerName: user.fullName,
-        origin,
-        destination,
-        protectedPrice: pricing.totalFare,
-        finalPrice: finalPrice,
+      // 3. Crear el ride a través del Gatekeeper de Backend con validación de Quote HMAC
+      const rawQuote = (pricing as any).rawQuote || {
+        quoteId: pricing.quoteId,
+        pricingVersion: 'DPE_V2',
+        totalFare: pricing.totalFare,
+        normalFare: pricing.normalFare || pricing.basePrice,
+        multiplier: pricing.multiplier,
         distance: pricing.distance,
         duration: pricing.duration,
-        pricingSeal: pricing.seal,
+        origin: {
+          address: origin.address,
+          lat: origin.lat,
+          lng: origin.lng
+        },
+        destination: {
+          address: destination.address,
+          lat: destination.lat,
+          lng: destination.lng
+        },
+        currency: 'PEN',
+        expiresAt: pricing.expiresAt.toISOString(),
+        pricingSeal: pricing.seal
+      };
+
+      const rideResponse = await RideClientService.requestRide({
+        quote: rawQuote,
+        passengerId: user.uid,
+        passengerName: user.fullName,
+        passengerPhone: user.phone || '',
         paymentMethod: selectedMethod,
         paymentState: paymentResult.status,
         paymentId: paymentResult.transactionId || `tx_${Date.now()}`,
-        status: RideStatus.SEARCHING_DRIVER,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
+        idempotencyKey: `ride_${user.uid}_${pricing.quoteId}`
       });
 
-      // Update the transaction engine ride association
-      await updateDoc(doc(db, 'rides', newRideDoc.id), {
-        id: newRideDoc.id
-      });
+      if (!rideResponse.success) {
+        throw new Error('El servidor rechazó la creación del viaje.');
+      }
 
       setPaymentSuccess(`¡Pago autorizado con éxito por S/ ${finalPrice.toFixed(2)}! Buscando conductor...`);
       await loadPassengerFinancials(); // Refresh wallet balance
@@ -1261,10 +1294,36 @@ Consulte su comprobante en la web oficial.`;
         <ZenithOrderCreationModal
           user={user}
           initialOrigin={origin}
+          initialDestination={destination.address ? destination : undefined}
           onClose={() => setShowOrderCreationModal(false)}
-          onOrderCreated={(orderId) => {
+          onOrderCreated={(orderId, order) => {
             setShowOrderCreationModal(false);
-            console.log('[ZENITH-ORDER-CREATED]', orderId);
+            if (order) {
+              setActiveRide({
+                id: order.id,
+                passengerId: user.uid,
+                passengerName: user.fullName || 'Usuario Zénith',
+                origin: { address: order.originAddress, lat: order.originLat, lng: order.originLng },
+                destination: { address: order.destinationAddress, lat: order.destLat, lng: order.destLng },
+                protectedPrice: order.protectedPrice || 0,
+                pricingSeal: order.pricingSeal || '',
+                pricingVersion: order.pricingVersion || '2.0.0-dpe-mvp',
+                status: RideStatus.SEARCHING_DRIVER,
+                solicitudeStatus: SolicitudeStatus.REQUESTED,
+                transitStatus: TransitStatus.IDLE,
+                deliveryStatus: DeliveryStatus.PENDING,
+                custodyStatus: CustodyStatus.NONE,
+                distance: order.distanceMeters ? order.distanceMeters / 1000 : 0,
+                duration: order.durationSeconds ? Math.round(order.durationSeconds / 60) : 0,
+                createdAt: new Date() as any,
+                updatedAt: new Date() as any,
+                solicitante: order.solicitante,
+                pagador: order.pagador,
+                receptor: order.receptor,
+                packageInfo: order.packageInfo,
+                evidenceLevel: order.evidenceLevel
+              } as Ride);
+            }
           }}
         />
       )}

@@ -21,10 +21,96 @@ export type FirestoreTimestamp = Timestamp | FieldValue;
 
 export interface WalletMovement {
   id: string;
-  type: 'deposit' | 'withdrawal' | 'ride_earning' | 'fee' | 'cash_compensation';
+  type: 'deposit' | 'withdrawal' | 'ride_earning' | 'fee' | 'cash_compensation' | 'topup_yape';
   amount: number;
   description: string;
   createdAt: FirestoreTimestamp;
+  referenceId?: string;
+}
+
+// ============================================================================
+// TOPUP V1 — PILOTO YAPE PERSONAL
+// ============================================================================
+export type TopupStatus =
+  | 'CREATED'
+  | 'RECEIPT_SUBMITTED'
+  | 'EXTRACTED_BY_AI'
+  | 'RECONCILING'
+  | 'VERIFIED'
+  | 'REVIEW'
+  | 'REJECTED'
+  | 'CREDITED';
+
+export interface YapeReceiptExtraction {
+  amount: number | null;
+  date: string | null; // YYYY-MM-DD
+  time: string | null; // HH:mm
+  payerName: string | null;
+  securityCode: string | null;
+  operationNumber: string | null;
+  rawText?: string | null;
+  confidence: number; // 0 to 1
+  extractedAt: string;
+}
+
+export interface BankMovement {
+  id: string;
+  source: 'YAPE_PERSONAL_MANUAL';
+  amount: number;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:mm
+  payerName: string;
+  securityCode?: string;
+  operationNumber?: string;
+  operatorId: string;
+  operatorNotes?: string;
+  confirmedAt: string;
+  status: 'UNCLAIMED' | 'MATCHED' | 'DISPUTED';
+  matchedTopupId?: string;
+}
+
+export interface ReconciliationResult {
+  status: 'VERIFIED' | 'REVIEW' | 'REJECTED';
+  reconciledAt: string;
+  reconciledBy: 'OPERATOR_MANUAL' | 'SYSTEM_AUTOMATIC';
+  reconciledOperatorId?: string;
+  discrepancies: string[];
+  notes?: string;
+  verifiedAmount?: number;
+  matchedMovementId?: string;
+}
+
+export interface TopupAuditEntry {
+  fromStatus: TopupStatus | 'NONE';
+  toStatus: TopupStatus;
+  timestamp: string;
+  actorId: string;
+  actorRole: 'driver' | 'operator' | 'system' | 'ai';
+  reason?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface TopupRequest {
+  id: string; // TOPUP-YYYYMMDD-XXXXXX
+  referenceCode: string; // ZNTH-XXXXXX
+  driverId: string;
+  driverName: string;
+  driverPhone: string;
+  requestedAmount: number;
+  verifiedAmount?: number;
+  status: TopupStatus;
+  receiptUrl?: string;
+  receiptBase64?: string;
+  aiExtraction?: YapeReceiptExtraction;
+  bankMovementId?: string;
+  reconciliation?: ReconciliationResult;
+  auditHistory: TopupAuditEntry[];
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+  creditedAt?: string;
+  creditedTxId?: string;
+  finalBalanceSnapshot?: number;
 }
 
 export enum PaymentState {
@@ -99,6 +185,7 @@ export interface User {
   pendingDebt?: number;
   pendingDebtReason?: string;
   driverProfile?: DriverProfile;
+  city?: string;
 }
 
 export enum DocumentStatus {
@@ -331,8 +418,10 @@ export interface Ride {
   id: string;
   passengerId: string;
   passengerName: string;
+  passengerPhone?: string;
   driverId?: string;
   driverName?: string;
+  driverPhone?: string;
   origin: Location;
   destination: Location;
   protectedPrice: number; // Precio único protegido calculado por el PricingEngine de Zénith
@@ -431,3 +520,13 @@ export interface EmergencyEvent {
   comment?: string;
   resolved: boolean;
 }
+
+// ============================================================================
+// IDENTITY CORE V1 & OPERATIONAL ELIGIBILITY CONTRACTS
+// ============================================================================
+export type {
+  IdentityContext,
+  WalletContext,
+  OperationalContext,
+  EligibilityResult
+} from './services/OperationalEligibilityEngine';

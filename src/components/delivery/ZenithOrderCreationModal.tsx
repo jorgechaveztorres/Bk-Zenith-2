@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, Solicitante, Pagador, Receptor, ProductType, PackageInfo, EvidenceLevel, Location, RideStatus, SolicitudeStatus, TransitStatus, DeliveryStatus, CustodyStatus } from '../../types';
 import { OperationalEngine } from '../../services/OperationalEngine';
 import { calculatePricing } from '../../utils/pricingEngine';
+import { PricingService } from '../../services/PricingService';
+import { RideClientService } from '../../services/RideClientService';
 import PlacesAutocomplete from '../PlacesAutocomplete';
 import { 
   Package, 
@@ -20,29 +22,44 @@ import {
 } from 'lucide-react';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase/config';
+import { createDraftOrder, publishOrder, cleanOrphanTestOrders, OperationRecord } from '../../services/operationalOrdersService';
 
 interface ZenithOrderCreationModalProps {
   user: User;
   onClose: () => void;
-  onOrderCreated: (orderId: string) => void;
+  onOrderCreated: (orderId: string, order?: OperationRecord) => void;
   initialOrigin?: Location;
+  initialDestination?: Location;
 }
 
 export default function ZenithOrderCreationModal({
   user,
   onClose,
   onOrderCreated,
-  initialOrigin
+  initialOrigin,
+  initialDestination
 }: ZenithOrderCreationModalProps) {
   // Origin & Destination
   const [origin, setOrigin] = useState<Location>(
     initialOrigin || { address: 'Trujillo Centro, La Libertad, Perú', lat: -8.11189, lng: -79.02875 }
   );
-  const [destination, setDestination] = useState<Location>({
-    address: '',
-    lat: -8.12189,
-    lng: -79.01875
+  const [destination, setDestination] = useState<Location>(() => {
+    if (initialDestination && initialDestination.address && initialDestination.address.trim()) {
+      return initialDestination;
+    }
+    return {
+      address: initialDestination?.address || 'Mall Aventura Plaza, Av. Mansiche, Trujillo',
+      lat: initialDestination?.lat || -8.0988,
+      lng: initialDestination?.lng || -79.0435
+    };
   });
+
+  // Mantener sincronizado el destino si el componente padre lo actualiza
+  useEffect(() => {
+    if (initialDestination && initialDestination.address && initialDestination.address.trim()) {
+      setDestination(initialDestination);
+    }
+  }, [initialDestination]);
 
   // Package Information
   const [productDescription, setProductDescription] = useState('');
@@ -113,23 +130,23 @@ export default function ZenithOrderCreationModal({
 
     setSubmitting(true);
     try {
-      // 1. Calculate fare using Zénith pricing engine
-      const pricing = calculatePricing(
-        origin.lat,
-        origin.lng,
-        destination.lat,
-        destination.lng,
-        origin.address,
-        destination.address
-      );
-      const fare = pricing.totalFare || 12.0;
+      // 1. Calculate fare using Zénith server-side pricing engine (DPE V2)
+      const pricing = await PricingService.requestQuote({
+        originLat: origin.lat,
+        originLng: origin.lng,
+        destLat: destination.lat,
+        destLng: destination.lng,
+        originAddress: origin.address,
+        destAddress: destination.address
+      });
+      const fare = pricing.totalFare;
 
       // 2. Build Protagonists
       const solicitante: Solicitante = {
         uid: user.uid,
         name: user.fullName || 'Usuario Zénith',
         phone: user.phone || '999888777',
-        email: user.email
+        email: user.email || 'solicitante@zenith.pe'
       };
 
       const pagador: Pagador = {
@@ -162,52 +179,104 @@ export default function ZenithOrderCreationModal({
       // 4. Evidence Level
       const evidenceLevel = OperationalEngine.determineEvidenceLevel(packageInfo);
 
-      // 5. Build Initial Delivery Operation in Firestore
-      const newRideDoc = await addDoc(collection(db, 'rides'), {
-        passengerId: user.uid,
-        passengerName: user.fullName,
-        solicitante,
-        pagador,
-        receptor,
-        origin,
-        destination,
-        protectedPrice: fare,
-        pricingSeal: pricing.seal || `ZENITH-SEAL-${Date.now()}`,
-        pricingVersion: '2.0.1-enterprise',
-        distance: pricing.distance || 3.5,
-        duration: pricing.duration || 12,
-        
-        // 4 State Dimensions
-        status: RideStatus.SEARCHING_DRIVER,
-        solicitudeStatus: SolicitudeStatus.REQUESTED,
-        transitStatus: TransitStatus.IDLE,
-        deliveryStatus: DeliveryStatus.PENDING,
-        custodyStatus: CustodyStatus.NONE,
+      // Limpieza de órdenes TEST huérfanas antes de crear nueva orden
+      cleanOrphanTestOrders(undefined, user.uid);
 
-        evidenceLevel,
+      // 5. Gatekeeper Server-Side: Crear orden verificada mediante backend
+      const rawQuote = (pricing as any).rawQuote || {
+        quoteId: pricing.quoteId,
+        pricingVersion: 'DPE_V2',
+        totalFare: pricing.totalFare,
+        normalFare: pricing.normalFare || pricing.basePrice,
+        multiplier: pricing.multiplier,
+        distance: pricing.distance,
+        duration: pricing.duration,
+        origin: {
+          address: origin.address,
+          lat: origin.lat,
+          lng: origin.lng
+        },
+        destination: {
+          address: destination.address,
+          lat: destination.lat,
+          lng: destination.lng
+        },
+        currency: 'PEN',
+        expiresAt: pricing.expiresAt.toISOString(),
+        pricingSeal: pricing.seal
+      };
+
+      const serverRideResult = await RideClientService.requestRide({
+        quote: rawQuote,
+        passengerId: user.uid,
+        passengerName: user.fullName || 'Usuario Zénith',
+        passengerPhone: user.phone || '999888777',
+        paymentMethod,
+        orderType: 'DELIVERY',
         packageInfo,
+        receptor,
+        pagador,
+        solicitante,
+        evidenceLevel,
         returnContingency: {
           agreed: true,
           returnLocation: origin,
           returnFareAdditional: Number((fare * 0.8).toFixed(2))
         },
-        communicationAttempts: [],
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
+        idempotencyKey: `delivery_${user.uid}_${pricing.quoteId}`
       });
 
-      // Record Event
-      await OperationalEngine.recordEvent(
-        newRideDoc.id,
-        { role: 'SOLICITANTE', id: user.uid, name: user.fullName },
+      // 6. Registrar en el almacén de órdenes operacionales local
+      const draft = createDraftOrder({
+        id: serverRideResult.rideId,
+        originAddress: origin.address,
+        originLat: origin.lat,
+        originLng: origin.lng,
+        destinationAddress: destination.address,
+        destLat: destination.lat,
+        destLng: destination.lng,
+        distanceText: `${pricing.distance.toFixed(1)} km`,
+        durationText: `${pricing.duration} min`,
+        distanceMeters: Math.round(pricing.distance * 1000),
+        durationSeconds: Math.round(pricing.duration * 60),
+        polylinePoints: [],
+        passengerId: user.uid,
+        passengerName: user.fullName || 'Usuario Zénith',
+        passengerPhone: user.phone || '999888777',
+        protectedPrice: fare,
+        finalPrice: fare,
+        pricingSeal: pricing.seal || `ZENITH-SEAL-${Date.now()}`,
+        pricingVersion: pricing.pricingVersion,
+        basePrice: pricing.normalFare,
+        multiplier: pricing.multiplier,
+        marketPressure: pricing.marketPressure,
+        currency: 'PEN',
+        packageInfo,
+        receptor,
+        pagador,
+        solicitante,
+        evidenceLevel,
+        returnContingency: {
+          agreed: true,
+          returnLocation: origin,
+          returnFareAdditional: Number((fare * 0.8).toFixed(2))
+        }
+      });
+
+      const published = await publishOrder(draft.id);
+
+      // 7. Event Sourcing: Registrar evento operacional inmutable en background sin bloquear flujo
+      OperationalEngine.recordEvent(
+        serverRideResult.rideId,
+        { role: 'SOLICITANTE', id: user.uid, name: user.fullName || 'Usuario Zénith' },
         'SOLICITUDE_CREATED',
         `Solicitud de entrega creada para motorizado. Producto: "${productDescription}" (${productType === ProductType.PERISHABLE ? 'Perecible - 60 min ventana' : 'No Perecible - 48h'}). Nivel de evidencia: ${evidenceLevel}.`,
         origin.lat,
         origin.lng,
-        { fare, evidenceLevel, productType }
-      );
+        { fare, evidenceLevel, productType, orderId: serverRideResult.rideId }
+      ).catch(e => console.warn('[ZENITH-EVENT] Auditoría diferida:', e));
 
-      onOrderCreated(newRideDoc.id);
+      onOrderCreated(serverRideResult.rideId, published);
       onClose();
     } catch (err: unknown) {
       console.error('[ZENITH-ORDER-ERROR]', err);
@@ -289,10 +358,33 @@ export default function ZenithOrderCreationModal({
                 <span className="text-[9px] font-mono text-gray-500 uppercase font-bold">Punto de Entrega (Destino Inmutable)</span>
                 <PlacesAutocomplete
                   value={destination.address}
+                  onChangeText={(addr) => setDestination(prev => ({ ...prev, address: addr }))}
                   onLocationSelect={(loc) => setDestination(loc)}
                   placeholder="Ingrese dirección de entrega..."
                   icon={<MapPin size={16} className="text-[#39FF14]" />}
                 />
+                {/* Atajos Rápidos de Destino para Prueba Real */}
+                <div className="flex flex-wrap gap-1.5 pt-1.5">
+                  <span className="text-[9px] font-mono text-gray-500 uppercase self-center">Atajos:</span>
+                  {[
+                    { label: 'Mall Aventura', address: 'Mall Aventura Plaza, Av. Mansiche, Trujillo', lat: -8.0988, lng: -79.0435 },
+                    { label: 'Huanchaco', address: 'Malecón Huanchaco, Trujillo, Perú', lat: -8.0772, lng: -79.1197 },
+                    { label: 'Urb. California', address: 'Av. Larco 1100, Urb. California, Trujillo', lat: -8.1255, lng: -79.0350 }
+                  ].map((preset, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setDestination({
+                        address: preset.address,
+                        lat: preset.lat,
+                        lng: preset.lng
+                      })}
+                      className="px-2 py-0.5 rounded-md bg-white/5 hover:bg-[#39FF14]/20 border border-white/10 hover:border-[#39FF14]/40 text-[9px] font-mono text-gray-300 hover:text-[#39FF14] transition-all cursor-pointer"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -477,6 +569,14 @@ export default function ZenithOrderCreationModal({
               </span>
             </label>
           </div>
+
+          {/* Error Banner Above Action Buttons */}
+          {error && (
+            <div className="p-3.5 rounded-xl bg-red-500/20 border border-red-500/50 text-red-300 text-xs font-mono flex items-center gap-2">
+              <AlertCircle size={16} className="text-red-400 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
 
           {/* Action Buttons */}
           <div className="flex gap-3 pt-2">
