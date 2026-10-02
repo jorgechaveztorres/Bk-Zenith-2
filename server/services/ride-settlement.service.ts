@@ -1,7 +1,7 @@
 import { db } from '../config/firebase';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 
-const PLATFORM_COMMISSION_RATE = 0.15;
+const PLATFORM_COMMISSION_RATE = 0.13;
 const INTERNAL_WALLET_METHODS = new Set(['wallet', 'zenith_wallet']);
 
 type WalletData = Record<string, unknown>;
