@@ -160,7 +160,9 @@ export class RideSettlementService {
         }
       }
 
-      const driverAdjustment = INTERNAL_WALLET_METHODS.has(paymentMethod)
+      const isCash = paymentMethod === 'cash';
+      const isInternalWallet = INTERNAL_WALLET_METHODS.has(paymentMethod);
+      const driverAdjustment = isInternalWallet || !isCash
         ? driverNet
         : -commission;
 
@@ -179,16 +181,22 @@ export class RideSettlementService {
       );
 
       const now = FieldValue.serverTimestamp();
-      const ledgerLines = INTERNAL_WALLET_METHODS.has(paymentMethod)
+      const ledgerLines = isInternalWallet
         ? [
             { account: 'PASIVO_WALLET_PASAJERO', side: 'DEBIT', amount: grossAmount },
             { account: 'PASIVO_WALLET_MOTORIZADO', side: 'CREDIT', amount: driverNet },
             { account: 'INGRESO_COMISION_ZENITH', side: 'CREDIT', amount: commission }
           ]
-        : [
-            { account: 'PASIVO_WALLET_MOTORIZADO', side: 'DEBIT', amount: commission },
-            { account: 'INGRESO_COMISION_ZENITH', side: 'CREDIT', amount: commission }
-          ];
+        : isCash
+          ? [
+              { account: 'PASIVO_WALLET_MOTORIZADO', side: 'DEBIT', amount: commission },
+              { account: 'INGRESO_COMISION_ZENITH', side: 'CREDIT', amount: commission }
+            ]
+          : [
+              { account: 'ACTIVO_PROCESADOR_PAGOS', side: 'DEBIT', amount: grossAmount },
+              { account: 'PASIVO_WALLET_MOTORIZADO', side: 'CREDIT', amount: driverNet },
+              { account: 'INGRESO_COMISION_ZENITH', side: 'CREDIT', amount: commission }
+            ];
 
       const totalDebit = money(
         ledgerLines.filter(line => line.side === 'DEBIT').reduce((sum, line) => sum + line.amount, 0)
