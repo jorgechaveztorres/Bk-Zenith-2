@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { verifyQuoteSignature } from './pricing.service';
 import { resolveCityFromCoordinates } from './geo.service';
 import { DispatchService } from './dispatch.service';
+import { RideSettlementService } from './ride-settlement.service';
 
 const OTP_SECRET = process.env.OTP_SECRET || 'ZENITH_SECURE_OTP_SALT_2026';
 
@@ -393,6 +394,12 @@ export class RideService {
   static async updateRideStatus(rideId: string, driverId: string, status: string) {
     if (!db) throw new Error('Base de datos no disponible.');
 
+    // COMPLETED is a financial boundary: settlement owns the atomic transition.
+    // This prevents a ride from becoming COMPLETED without wallet + ledger settlement.
+    if (status === 'COMPLETED') {
+      return RideSettlementService.completeRide(rideId, driverId);
+    }
+
     const rideRef = db.collection('rides').doc(rideId);
 
     return await db.runTransaction(async (transaction) => {
@@ -429,13 +436,8 @@ export class RideService {
         throw err;
       }
 
-      let driverSnap: any = null;
-      let driverRef: any = null;
-      if (status === 'COMPLETED') {
-        driverRef = db.collection('drivers_online').doc(driverId);
-        driverSnap = await transaction.get(driverRef);
-      }
-
+      // COMPLETED is handled above by RideSettlementService.
+      // Remaining transitions only mutate operational state.
       // 2. TODAS LAS ESCRITURAS DESPUÉS
       const updatePayload: Record<string, any> = {
         status,
@@ -447,15 +449,6 @@ export class RideService {
       }
 
       transaction.update(rideRef, updatePayload);
-
-      // Si el viaje se completa, liberar al conductor: BUSY -> AVAILABLE
-      if (status === 'COMPLETED' && driverRef && driverSnap && driverSnap.exists) {
-        transaction.update(driverRef, {
-          status: 'AVAILABLE',
-          currentRideId: null,
-          lastActive: FieldValue.serverTimestamp()
-        });
-      }
 
       return { success: true, message: `Estado actualizado a ${status}.`, status };
     });
@@ -521,7 +514,7 @@ export class RideService {
       const inputHash = hashOtp(rideId, (inputOtp || '').trim());
       if (inputHash !== ride.otpHash) {
         const nextAttempts = currentAttempts + 1;
-        await rideRef.update({
+        transaction.update(rideRef, {
           otpAttempts: nextAttempts,
           updatedAt: FieldValue.serverTimestamp()
         });
