@@ -21,7 +21,7 @@ export type FirestoreTimestamp = Timestamp | FieldValue;
 
 export interface WalletMovement {
   id: string;
-  type: 'deposit' | 'ride_earning' | 'fee' | 'cash_compensation' | 'topup_yape';
+  type: 'deposit' | 'ride_earning' | 'fee' | 'cash_compensation' | 'topup_yape' | 'platform_commission';
   amount: number;
   description: string;
   createdAt: FirestoreTimestamp;
