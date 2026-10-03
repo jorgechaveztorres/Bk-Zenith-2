@@ -49,10 +49,6 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
   // Financial Wallet V2 states
   const [driverWallet, setDriverWallet] = useState<any>(null);
   const [showWalletDetails, setShowWalletDetails] = useState(false);
-  const [bankAccount, setBankAccount] = useState('');
-  const [settlementSuccessMsg, setSettlementSuccessMsg] = useState<string | null>(null);
-  const [settlementErrorMsg, setSettlementErrorMsg] = useState<string | null>(null);
-  const [settling, setSettling] = useState(false);
   const [reloadAmount, setReloadAmount] = useState<number>(30);
   const [reloadingWallet, setReloadingWallet] = useState(false);
   const [showTopupModal, setShowTopupModal] = useState(false);
@@ -530,60 +526,7 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
                 </button>
               </div>
 
-              {/* Settlement Payout Console */}
-              <div className="bg-neutral-950/80 border border-white/5 rounded-2xl p-5 space-y-4">
-                <h5 className="text-[10px] font-mono font-black text-[#39FF14] uppercase tracking-wider flex items-center gap-1.5">
-                  <Lock size={12} /> Consola de Transferencia Bancaria y Liquidaciones
-                </h5>
-                <p className="text-[11px] text-gray-400">
-                  Transfiera sus fondos disponibles directamente a su cuenta bancaria en tiempo real (mínimo S/. 10.00). La conciliación de firmas de viaje se ejecuta de forma asíncrona para Zero-Trust.
-                </p>
 
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <div className="flex-1">
-                    <input 
-                      type="text"
-                      placeholder="Ingrese número de cuenta (CCI, BCP, BBVA)"
-                      value={bankAccount}
-                      onChange={(e) => setBankAccount(e.target.value)}
-                      className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-xs font-mono text-[#39FF14] focus:outline-none focus:border-[#39FF14] transition-all"
-                    />
-                  </div>
-                  <button
-                    disabled={settling || !bankAccount || (driverWallet?.availableBalance || 0) < 10}
-                    onClick={async () => {
-                      setSettling(true);
-                      setSettlementErrorMsg(null);
-                      setSettlementSuccessMsg(null);
-                      try {
-                        const amount = Number(driverWallet?.availableBalance || 0);
-                        const updatedWallet = await WalletService.withdrawFunds(user.uid, amount, bankAccount);
-                        setSettlementSuccessMsg(`Liquidación de S/. ${amount.toFixed(2)} procesada exitosamente.`);
-                        setBankAccount('');
-                        setDriverWallet(updatedWallet);
-                      } catch (err: any) {
-                        setSettlementErrorMsg(err.message || 'Error al procesar la liquidación.');
-                      } finally {
-                        setSettling(false);
-                      }
-                    }}
-                    className="bg-[#39FF14] text-black font-black uppercase text-[10px] tracking-widest rounded-xl px-6 py-3 cursor-pointer hover:shadow-glow hover:scale-[1.01] transition-all disabled:opacity-40 disabled:cursor-not-allowed text-center"
-                  >
-                    {settling ? 'Procesando...' : 'Solicitar Liquidación Instantánea'}
-                  </button>
-                </div>
-
-                {settlementSuccessMsg && (
-                  <p className="text-[10px] font-mono text-emerald-400 uppercase tracking-wider font-bold">
-                    ✓ {settlementSuccessMsg}
-                  </p>
-                )}
-                {settlementErrorMsg && (
-                  <p className="text-[10px] font-mono text-red-400 uppercase tracking-wider font-bold">
-                    ⚠️ {settlementErrorMsg}
-                  </p>
-                )}
-              </div>
 
               {/* Transactions Ledger History */}
               <div className="space-y-3">
