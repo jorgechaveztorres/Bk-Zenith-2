@@ -178,7 +178,7 @@ export default function TaxCenterDashboard() {
         driverId: `driver_sim_${Math.floor(Math.random() * 900 + 100)}`,
         subtotal: parseFloat(subtotal.toFixed(2)),
         igv: parseFloat(igv.toFixed(2)),
-        commission: parseFloat((simulatedPrice * 0.15).toFixed(2)),
+        commission: parseFloat((simulatedPrice * 0.13).toFixed(2)),
         total: simulatedPrice,
         paymentMethod: 'wallet',
         status: 'SETTLED'
