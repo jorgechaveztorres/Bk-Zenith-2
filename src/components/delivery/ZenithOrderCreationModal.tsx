@@ -211,7 +211,6 @@ export default function ZenithOrderCreationModal({
         passengerId: user.uid,
         passengerName: user.fullName || 'Usuario Zénith',
         passengerPhone: user.phone || '999888777',
-        paymentMethod,
         orderType: 'DELIVERY',
         packageInfo,
         receptor,
