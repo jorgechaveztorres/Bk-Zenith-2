@@ -216,16 +216,31 @@ export const TopupService = {
         ? `MOV-${bankMovement.operationNumber}-${bankMovement.securityCode}`
         : `MOV-${bankMovement.date}-${bankMovement.time}-${bankMovement.amount}-${bankMovement.payerName.replace(/\s+/g, '_')}`;
 
-      // Persistir el movimiento físico confirmado en bank_movements de Firestore
-      await db.collection('bank_movements').doc(movementDocId).set({
-        ...bankMovement,
-        id: movementDocId,
-        source: 'YAPE_PERSONAL_MANUAL',
-        operatorId,
-        matchedTopupId: topupId,
-        confirmedAt: new Date().toISOString(),
-        createdAtServer: FieldValue.serverTimestamp()
-      }, { merge: true });
+      // Reclamar el movimiento de forma atómica antes de modificarlo.
+      // Esto evita que dos recargas distintas puedan asociarse al mismo movimiento
+      // si llegan casi simultáneamente.
+      const movementRef = db.collection('bank_movements').doc(movementDocId);
+      await db.runTransaction(async (transaction) => {
+        const movementSnap = await transaction.get(movementRef);
+        if (movementSnap.exists) {
+          const existingTopupId = movementSnap.data()?.matchedTopupId;
+          if (existingTopupId && existingTopupId !== topupId) {
+            throw new Error(
+              `MOVIMIENTO_YA_ASIGNADO: El movimiento bancario ${movementDocId} ya está vinculado a la recarga ${existingTopupId}.`
+            );
+          }
+        }
+
+        transaction.set(movementRef, {
+          ...bankMovement,
+          id: movementDocId,
+          source: 'YAPE_PERSONAL_MANUAL',
+          operatorId,
+          matchedTopupId: topupId,
+          confirmedAt: new Date().toISOString(),
+          createdAtServer: FieldValue.serverTimestamp()
+        }, { merge: true });
+      });
     }
 
     // Evaluar con el motor de conciliación humana
