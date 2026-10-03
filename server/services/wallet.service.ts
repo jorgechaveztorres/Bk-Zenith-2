@@ -51,39 +51,27 @@ export const WalletService = {
       }
     }
     
-    // Default initial wallet with default starting credit (S/. 120 + S/. 25 promo)
     const defaultWallet = {
-      availableBalance: 120.00,
+      availableBalance: 0.00,
       retainedBalance: 0.00,
       dailyEarnings: 0.00,
       weeklyEarnings: 0.00,
       pendingSettlement: 0.00,
-      digitalBalance: 120.00,
+      digitalBalance: 0.00,
       cashDebt: 0.00,
       todaySettlements: 0,
       nextSettlementDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      
-      // Wallet V2 extensions
       pendingBalance: 0.00,
-      promotionalBalance: 25.00,
+      promotionalBalance: 0.00,
       compensationBalance: 0.00,
       accumulatedCommission: 0.00,
       monthlyEarnings: 0.00,
-      dailyBalanceHist: { Lunes: 120, Martes: 120, Miercoles: 120, Jueves: 120, Viernes: 120, Sabado: 120, Domingo: 120 },
-      weeklyBalanceHist: { 'Semana 1': 120, 'Semana 2': 120, 'Semana 3': 120, 'Semana 4': 120 },
-      monthlyBalanceHist: { Enero: 120, Febrero: 120, Marzo: 120, Abril: 120, Mayo: 120, Junio: 120 },
-      
-      movements: [
-        {
-          id: `mov_init_${Date.now()}`,
-          type: 'deposit',
-          amount: 120.00,
-          description: 'Bono táctico de bienvenida a la red Zénith',
-          createdAt: Timestamp.now()
-        }
-      ]
+      dailyBalanceHist: {},
+      weeklyBalanceHist: {},
+      monthlyBalanceHist: {},
+      movements: []
     };
-    
+
     await userDocRef.update({
       wallet: defaultWallet
     });
