@@ -40,8 +40,6 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { WalletService } from '../services/WalletService';
-import { PaymentEngine, PaymentMethodDetails } from '../services/PaymentEngine';
-import { TransactionEngine } from '../services/TransactionEngine';
 import { 
   CreditCard, 
   QrCode, 
@@ -309,7 +307,7 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
     }
   };
 
-  // Secure checkout process utilizing PaymentEngine and TransactionEngine
+  // Publicar viaje con el medio de pago acordado directamente entre cliente y motorizado.
   const confirmPaymentAndPublishRide = async () => {
     if (!pricing) return;
     
@@ -321,31 +319,6 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
     const finalPrice = Math.max(0, Number((pricing.totalFare - discountAmount).toFixed(2)));
 
     try {
-      // 2. Initialize payment record in state machine using PaymentEngine
-      const tempRide: any = {
-        id: `ride_temp_${Date.now()}`,
-        passengerId: user.uid,
-        passengerName: user.fullName,
-        origin,
-        destination,
-        protectedPrice: pricing.totalFare,
-        finalPrice: finalPrice,
-        status: RideStatus.SEARCHING_DRIVER
-      };
-
-      const paymentDetails: PaymentMethodDetails = {
-        method: selectedMethod as any,
-        amount: finalPrice,
-        phone: (selectedMethod === 'yape' || selectedMethod === 'plin') ? '999888777' : undefined,
-        cardNumber: selectedMethod === 'card' ? '1234567812345678' : undefined
-      };
-
-      const paymentResult = await PaymentEngine.processPayment(tempRide, paymentDetails);
-
-      if (!paymentResult.success) {
-        throw new Error(paymentResult.message || 'Transacción denegada por el motor antifraude.');
-      }
-
       setPipelineStep('creating_ride');
       await new Promise((resolve) => setTimeout(resolve, 800));
 
@@ -379,8 +352,6 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
         passengerName: user.fullName,
         passengerPhone: user.phone || '',
         paymentMethod: selectedMethod,
-        paymentState: paymentResult.status,
-        paymentId: paymentResult.transactionId || `tx_${Date.now()}`,
         idempotencyKey: `ride_${user.uid}_${pricing.quoteId}`
       });
 
@@ -388,7 +359,7 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
         throw new Error('El servidor rechazó la creación del viaje.');
       }
 
-      setPaymentSuccess(`¡Pago autorizado con éxito por S/ ${finalPrice.toFixed(2)}! Buscando conductor...`);
+      setPaymentSuccess(`Medio de pago registrado. Buscando conductor...`);
       await loadPassengerFinancials(); // Refresh wallet balance
       
       // Keep state clear and let onSnapshot handle ride navigation
