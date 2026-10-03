@@ -12,7 +12,6 @@ const financialRateLimiter = rateLimit({
 });
 
 router.post('/getOrCreate', requireAuth, walletController.getOrCreateWallet);
-router.post('/deposit', requireAuth, financialRateLimiter, walletController.depositFunds);
 router.post('/withdraw', requireAuth, financialRateLimiter, walletController.withdrawFunds);
 
 export default router;
