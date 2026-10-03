@@ -17,7 +17,6 @@ import {
   ShieldAlert, 
   AlertTriangle, 
   ShieldCheck, 
-  Clock, 
   Receipt 
 } from 'lucide-react';
 
@@ -47,6 +46,17 @@ export default function FinancialDashboard() {
   });
 
   const [fraudAlerts, setFraudAlerts] = useState<FraudAlert[]>([]);
+
+  const handleResolveFraudAlert = async (alertId: string) => {
+    try {
+      await updateDoc(doc(db, 'fraud_alerts', alertId), {
+        status: 'RESOLVED',
+        resolvedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error al resolver alerta de fraude:', error);
+    }
+  };
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
 
   // Load simulated/real-time fraud alerts
@@ -114,7 +124,7 @@ export default function FinancialDashboard() {
       </div>
 
       {/* Grid KPI Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         {/* KPI: Volumen total */}
         <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between text-gray-500">
@@ -134,17 +144,6 @@ export default function FinancialDashboard() {
           </div>
           <p className="text-2xl font-black italic text-[#39FF14] mt-2 font-mono">
             S/ {metrics.platformFees.toFixed(2)}
-          </p>
-        </div>
-
-        {/* KPI: Liquidaciones pendientes */}
-        <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between text-yellow-400">
-            <span className="text-[9px] font-mono uppercase tracking-wider text-gray-500">Liquidaciones Pendientes</span>
-            <Clock size={16} />
-          </div>
-          <p className="text-2xl font-black italic text-yellow-400 mt-2 font-mono">
-            S/ {metrics.pendingSettlement.toFixed(2)}
           </p>
         </div>
 
