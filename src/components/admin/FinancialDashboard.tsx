@@ -24,7 +24,6 @@ import {
   Receipt 
 } from 'lucide-react';
 
-interface SettlementRequest {
   id: string;
   driverId: string;
   driverName?: string;
@@ -37,7 +36,6 @@ interface SettlementRequest {
 interface FinancialMetric {
   totalVolume: number;
   platformFees: number;
-  pendingSettlement: number;
   activeFraudAlerts: number;
 }
 
@@ -56,29 +54,11 @@ export default function FinancialDashboard() {
   const [metrics, setMetrics] = useState<FinancialMetric>({
     totalVolume: 8432.50,
     platformFees: 1264.88,
-    pendingSettlement: 540.00,
     activeFraudAlerts: 1
   });
 
-  const [settlements, setSettlements] = useState<SettlementRequest[]>([]);
   const [fraudAlerts, setFraudAlerts] = useState<FraudAlert[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
-  const [processingId, setProcessingId] = useState<string | null>(null);
-
-  // Load real-time settlements
-  useEffect(() => {
-    const q = query(collection(db, 'settlements'), orderBy('createdAt', 'desc'), limit(30));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const loaded: SettlementRequest[] = [];
-      snapshot.forEach((docSnap) => {
-        loaded.push({ id: docSnap.id, ...docSnap.data() } as SettlementRequest);
-      });
-      setSettlements(loaded);
-    }, (error) => {
-      console.error('[FinancialDashboard] Error fetching settlements:', error);
-    });
-    return () => unsubscribe();
-  }, []);
 
   // Load simulated/real-time fraud alerts
   useEffect(() => {
@@ -135,70 +115,6 @@ export default function FinancialDashboard() {
     return () => unsubscribe();
   }, []);
 
-  // Calculate hot indicators based on loaded collections
-  useEffect(() => {
-    // If settlements change, calculate dynamic totals
-    const pendingSum = settlements
-      .filter(s => s.status === 'PENDING')
-      .reduce((sum, s) => sum + s.amount, 0);
-
-    const activeFraudCount = fraudAlerts.filter(f => f.status === 'ACTIVE').length;
-
-    setMetrics(prev => ({
-      ...prev,
-      pendingSettlement: pendingSum || 450.00,
-      activeFraudAlerts: activeFraudCount
-    }));
-  }, [settlements, fraudAlerts]);
-
-  // Process a driver settlement request (approving transfer and adjusting status)
-  const handleApproveSettlement = async (req: SettlementRequest) => {
-    setProcessingId(req.id);
-    try {
-      // 1. Update status in settlements collection
-      const settlementRef = doc(db, 'settlements', req.id);
-      await updateDoc(settlementRef, {
-        status: 'PROCESSED',
-        processedAt: new Date().toISOString()
-      });
-
-      // 2. Audit the transaction securely (Zero-Trust Ledger confirmation)
-      await addDoc(collection(db, 'audit_repository'), {
-        action: 'SETTLEMENT_APPROVED',
-        executor: 'ADMINISTRATOR',
-        targetId: req.driverId,
-        details: `Approved settlement request S/ ${req.amount.toFixed(2)} to account ${req.bankAccount}`,
-        status: 'SECURE',
-        timestamp: new Date().toISOString()
-      });
-
-    } catch (e) {
-      console.error('[FinancialDashboard] Error processing settlement:', e);
-    } finally {
-      setProcessingId(null);
-    }
-  };
-
-  // Resolve a critical fraud alert trigger
-  const handleResolveFraudAlert = async (alertId: string) => {
-    try {
-      const alertRef = doc(db, 'fraud_alerts', alertId);
-      await updateDoc(alertRef, { status: 'RESOLVED' });
-
-      // Record resolution in security ledger
-      await addDoc(collection(db, 'audit_repository'), {
-        action: 'FRAUD_ALERT_RESOLVED',
-        executor: 'ADMINISTRATOR',
-        targetId: alertId,
-        details: `Secured and cleared fraud alert ${alertId}`,
-        status: 'SECURE',
-        timestamp: new Date().toISOString()
-      });
-    } catch (e) {
-      // Fallback local updates if doc is simulated
-      setFraudAlerts(prev => prev.map(f => f.id === alertId ? { ...f, status: 'RESOLVED' } : f));
-    }
-  };
 
   return (
     <div className="space-y-6" id="admin_financial_center">
@@ -224,7 +140,7 @@ export default function FinancialDashboard() {
         {/* KPI: Comisiones plataforma */}
         <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex flex-col justify-between">
           <div className="flex items-center justify-between text-emerald-400">
-            <span className="text-[9px] font-mono uppercase tracking-wider text-gray-500">Comisiones Zénith (15%)</span>
+            <span className="text-[9px] font-mono uppercase tracking-wider text-gray-500">Comisiones Zénith (13%)</span>
             <DollarSign size={16} />
           </div>
           <p className="text-2xl font-black italic text-[#39FF14] mt-2 font-mono">
@@ -258,51 +174,7 @@ export default function FinancialDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Left column: Settlement approvals & Fraud alerts */}
         <div className="space-y-6">
-          {/* Pending Settlements Console */}
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-4">
-            <h3 className="text-sm font-black uppercase italic text-[#39FF14] flex items-center gap-1.5 border-b border-white/5 pb-2">
-              <CheckCircle2 size={16} /> Liquidaciones a Conductores
-            </h3>
 
-            <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-              {settlements.length === 0 ? (
-                <div className="py-8 text-center text-xs font-mono text-gray-500 uppercase">
-                  No hay solicitudes de liquidación pendientes en Trujillo.
-                </div>
-              ) : (
-                settlements.map((s) => (
-                  <div key={s.id} className="bg-black/40 border border-white/5 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-white font-black">{s.driverName || 'Conductor Zénith'}</span>
-                        <span className={`text-[8px] font-mono px-2 py-0.5 rounded font-black ${s.status === 'PENDING' ? 'bg-yellow-400/15 text-yellow-400 border border-yellow-400/20' : 'bg-green-400/15 text-green-400 border border-green-400/20'}`}>
-                          {s.status}
-                        </span>
-                      </div>
-                      <p className="font-mono text-gray-500 text-[10px] uppercase">
-                        Cta: {s.bankAccount}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-0 border-white/5 pt-2 sm:pt-0">
-                      <span className="text-base font-black text-white font-mono">
-                        S/ {s.amount.toFixed(2)}
-                      </span>
-                      {s.status === 'PENDING' && (
-                        <button
-                          disabled={processingId === s.id}
-                          onClick={() => handleApproveSettlement(s)}
-                          className="bg-[#39FF14] hover:bg-[#39FF14]/90 text-black text-[10px] font-black uppercase tracking-wider px-3 py-1.5 rounded-lg font-mono transition-all cursor-pointer"
-                        >
-                          {processingId === s.id ? 'Procesando...' : 'Aprobar Pago'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
 
           {/* Fraud Security Alerts (Module 5/Fraud Engine) */}
           <div className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-4">
