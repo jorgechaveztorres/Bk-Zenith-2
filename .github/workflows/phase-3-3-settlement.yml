@@ -3,7 +3,7 @@ name: ZENITH Phase 3.4 Financial Reconciliation Audit
 on:
   push:
     branches:
-      - zenith/phase-3.3-settlement
+      - zenith/phase-3.4-reconciliation
   workflow_dispatch:
 
 jobs:
