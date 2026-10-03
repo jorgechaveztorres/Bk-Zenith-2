@@ -206,6 +206,14 @@ export const TopupService = {
       throw new Error('IDEMPOTENCIA: Esta solicitud ya fue acreditada.');
     }
 
+    if (topup.status === 'REJECTED') {
+      throw new Error('ESTADO_TERMINAL: Una solicitud REJECTED no puede volver a conciliarse.');
+    }
+
+    if (topup.status === 'VERIFIED') {
+      throw new Error('ESTADO_INMUTABLE: Una conciliación VERIFIED no puede ser reemplazada; debe pasar por acreditación o rechazo explícito.');
+    }
+
     if (new Date(topup.expiresAt) < new Date()) {
       throw new Error('SOLICITUD_EXPIRADA: La solicitud ha expirado.');
     }
