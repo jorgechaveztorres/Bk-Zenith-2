@@ -6,7 +6,7 @@
 // ============================================================================
 
 import { Router } from 'express';
-import { requireAuth } from '../middlewares/auth.middleware';
+import { requireAuth, requireRole } from '../middlewares/auth.middleware';
 import { topupController } from '../controllers/topup.controller';
 import rateLimit from 'express-rate-limit';
 
@@ -24,11 +24,14 @@ router.post('/receipt', requireAuth, topupRateLimiter, topupController.submitRec
 router.get('/status/:topupId', requireAuth, topupController.getStatus);
 router.get('/my-history', requireAuth, topupController.getMyHistory);
 
-// Rutas del operador / conciliación
-router.get('/pending', requireAuth, topupController.getPending);
-router.post('/reconcile', requireAuth, topupController.reconcile);
-router.post('/approve-review', requireAuth, topupController.approveReview);
-router.post('/reject', requireAuth, topupController.reject);
-router.post('/credit', requireAuth, topupController.credit);
+// Rutas de operación financiera: requieren rol administrativo.
+// La autorización se valida contra Custom Claims o el perfil server-side en Firestore.
+const requireFinancialOperator = [requireAuth, requireRole(['admin'])];
+
+router.get('/pending', ...requireFinancialOperator, topupController.getPending);
+router.post('/reconcile', ...requireFinancialOperator, topupController.reconcile);
+router.post('/approve-review', ...requireFinancialOperator, topupController.approveReview);
+router.post('/reject', ...requireFinancialOperator, topupController.reject);
+router.post('/credit', ...requireFinancialOperator, topupController.credit);
 
 export default router;
