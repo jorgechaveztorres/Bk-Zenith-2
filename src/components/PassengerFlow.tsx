@@ -894,7 +894,7 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
                               <div>
                                 <p className="text-white font-bold truncate max-w-[180px]">A: {r.destination.address}</p>
                                 <p className="text-[9px] font-mono text-gray-500 uppercase mt-0.5">
-                                  Método: {r.paymentMethod || 'Wallet'} · Estado: {r.paymentState || 'Settle'}
+                                  Pago: directo al motorizado
                                 </p>
                               </div>
                               <span className="font-mono text-[#39FF14] font-black">
@@ -939,7 +939,7 @@ BOLETA DE VENTA ELECTRÓNICA
 NÚMERO DE COMPROBANTE: B001-${Math.floor(Math.random() * 900000 + 100000)}
 FECHA DE EMISIÓN: ${new Date().toLocaleDateString('es-PE')}
 CLIENTE: ${user.fullName.toUpperCase()}
-MÉTODO DE PAGO: ${(r.paymentMethod || 'wallet').toUpperCase()}
+MÉTODO DE PAGO: PAGO DIRECTO AL MOTORIZADO
 =========================================
 DETALLE:
 Servicio de transporte urbano - ZÉNITH Perú
