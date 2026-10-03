@@ -110,7 +110,7 @@ export const topupController = {
       }
 
       // Verificación de propiedad (el motorizado solo puede consultar las suyas, admin puede ver todas)
-      if (topup.driverId !== user.uid && user.role !== 'admin' && user.email !== 'bkheelsec@gmail.com') {
+      if (topup.driverId !== user.uid && user.role !== 'admin') {
         return res.status(403).json({ success: false, message: 'Acceso denegado a esta recarga.' });
       }
 
