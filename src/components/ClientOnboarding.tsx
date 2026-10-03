@@ -372,11 +372,8 @@ export default function ClientOnboarding({ onComplete, onExitGuest }: ClientOnbo
           retainedBalance: 0,
           dailyEarnings: 0,
           weeklyEarnings: 0,
-          pendingSettlement: 0,
           digitalBalance: 50.00,
           cashDebt: 0,
-          todaySettlements: 0,
-          nextSettlementDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
           movements: [
             {
               id: 'welcome_gift',
