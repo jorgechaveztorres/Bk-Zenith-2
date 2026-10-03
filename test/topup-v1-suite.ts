@@ -5,9 +5,6 @@
 
 import { db } from '../server/config/firebase';
 import { TopupService } from '../server/services/topup.service';
-import { ReconciliationService } from '../server/services/reconciliation.service';
-import { topupController } from '../server/controllers/topup.controller';
-import { TopupRequest } from '../src/types';
 
 async function runTestSuite() {
   console.log('================================================================');
