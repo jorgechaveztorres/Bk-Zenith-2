@@ -34,7 +34,6 @@ export interface WalletContext {
   digitalBalance?: number;
   retainedBalance?: number;
   cashDebt?: number;
-  pendingSettlement?: number;
 }
 
 /**
@@ -86,7 +85,6 @@ export function extractWalletContext(wallet?: Partial<Wallet> | null): WalletCon
     digitalBalance: wallet?.digitalBalance ?? 0,
     retainedBalance: wallet?.retainedBalance ?? 0,
     cashDebt: wallet?.cashDebt ?? 0,
-    pendingSettlement: wallet?.pendingSettlement ?? 0
   };
 }
 
