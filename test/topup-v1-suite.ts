@@ -275,6 +275,36 @@ async function runTestSuite() {
       passedTests++;
     }
 
+    // ==========================================================================
+    // 12. NO PERMITIR RECONCILIAR NUEVAMENTE UNA RECARGA VERIFIED
+    // ==========================================================================
+    console.log('\\n[PRUEBA 12] Inmutabilidad del estado VERIFIED...');
+    const verifiedTopup = await TopupService.createTopupRequest(testDriverId, 31.00, {
+      name: 'Conductor Suite Humana'
+    });
+    toClean.push({ collection: 'topup_requests', docId: verifiedTopup.id });
+
+    await db.collection('topup_requests').doc(verifiedTopup.id).update({
+      status: 'VERIFIED',
+      reconciliation: {
+        status: 'VERIFIED',
+        matchedMovementId: 'MOV-TEST-VERIFIED',
+        verifiedAmount: 31.00
+      },
+      bankMovementId: 'MOV-TEST-VERIFIED'
+    });
+
+    try {
+      await TopupService.reconcileTopup(verifiedTopup.id, bankMovementExact, operatorId);
+      console.error('FAIL: Debió bloquear la sobrescritura de una conciliación VERIFIED');
+      process.exit(1);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.assert(message.includes('ESTADO_INMUTABLE'), 'FAIL: Mensaje inesperado');
+      console.log(`  ✓ VERIFIED protegido contra nueva conciliación: "${message}"`);
+      passedTests++;
+    }
+
   } finally {
     // ------------------------------------------------------------------------
     // LIMPIEZA ABSOLUTA DE DOCUMENTOS DE PRUEBA
