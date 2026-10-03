@@ -140,6 +140,67 @@ async function main() {
   assert.equal(cashLedger.data()?.creditTotal, 2.6);
   assert.equal(cashLedger.data()?.lines?.length, 2);
 
+
+  const digitalRideId = `settlement-digital-${suffix}`;
+  await driverRef.set({ role: 'driver', wallet: { ...baseWallet } });
+  await presenceRef.set({
+    driverId,
+    status: 'BUSY',
+    currentRideId: digitalRideId,
+    lastActive: new Date()
+  });
+  await db.collection('rides').doc(digitalRideId).set({
+    passengerId,
+    driverId,
+    status: 'IN_PROGRESS',
+    protectedPrice: 20,
+    finalPrice: 20,
+    currency: 'PEN',
+    paymentMethod: 'yape',
+    paymentState: 'AUTHORIZED'
+  });
+
+  const digitalResult = await RideSettlementService.completeRide(digitalRideId, driverId);
+  assert.equal(digitalResult.driverNet, 17.4);
+  assert.equal(digitalResult.commission, 2.6);
+
+  const digitalDriver = await driverRef.get();
+  assert.equal(digitalDriver.data()?.wallet?.availableBalance, 17.4);
+  assert.equal(digitalDriver.data()?.wallet?.digitalBalance, 17.4);
+  assert.equal(digitalDriver.data()?.wallet?.cashDebt, 0);
+
+  const digitalLedger = await db.collection('accounting_ledger').doc(`SETTLE_${digitalRideId}`).get();
+  assert.equal(digitalLedger.data()?.debitTotal, 20);
+  assert.equal(digitalLedger.data()?.creditTotal, 20);
+  assert.equal(digitalLedger.data()?.lines?.length, 3);
+
+  const invalidRideId = `settlement-invalid-method-${suffix}`;
+  await driverRef.set({ role: 'driver', wallet: { ...baseWallet } });
+  await presenceRef.set({
+    driverId,
+    status: 'BUSY',
+    currentRideId: invalidRideId,
+    lastActive: new Date()
+  });
+  await db.collection('rides').doc(invalidRideId).set({
+    passengerId,
+    driverId,
+    status: 'IN_PROGRESS',
+    protectedPrice: 20,
+    finalPrice: 20,
+    currency: 'PEN',
+    paymentMethod: 'unknown_method',
+    paymentState: 'AUTHORIZED'
+  });
+
+  await assert.rejects(
+    () => RideSettlementService.completeRide(invalidRideId, driverId),
+    (error: any) => error?.statusCode === 400
+  );
+
+  const invalidRide = await db.collection('rides').doc(invalidRideId).get();
+  assert.equal(invalidRide.data()?.status, 'IN_PROGRESS');
+
   console.log('RIDE SETTLEMENT TEST: PASS');
   console.log('PASS: concurrent idempotency + internal wallet + accounting balance + cash settlement');
 }
