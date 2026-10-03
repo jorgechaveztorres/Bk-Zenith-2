@@ -6,7 +6,7 @@
 // ============================================================================
 
 import { useEffect, useState } from 'react';
-import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, limit } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, updateDoc, doc, serverTimestamp, limit } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Ride, RideStatus, User, Location, SolicitudeStatus, TransitStatus, DeliveryStatus, CustodyStatus } from '../types';
 import { NotificationService } from '../services/NotificationService';
@@ -14,7 +14,7 @@ import MapContainer from './MapContainer';
 import TrackingMap from './maps/TrackingMap';
 import PassengerActiveTripHUD from './PassengerActiveTripHUD';
 import PlacesAutocomplete from './PlacesAutocomplete';
-import { calculatePricing, PricingResult } from '../utils/pricingEngine';
+import { PricingResult } from '../utils/pricingEngine';
 import { PricingService } from '../services/PricingService';
 import { RideClientService } from '../services/RideClientService';
 import Chat from './Chat';
@@ -39,7 +39,6 @@ import {
   Activity
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { WalletService } from '../services/WalletService';
 import { 
   CreditCard, 
   QrCode, 
