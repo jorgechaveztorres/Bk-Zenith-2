@@ -255,6 +255,26 @@ async function runTestSuite() {
       passedTests++;
     }
 
+    // ==========================================================================
+    // 11. PRUEBA DE BLOQUEO DE REUTILIZACIÓN DE MOVIMIENTO
+    // ==========================================================================
+    console.log('\\n[PRUEBA 11] Bloqueo de reutilización de movimiento bancario...');
+    const duplicateTopup = await TopupService.createTopupRequest(testDriverId, 30.00, {
+      name: 'Conductor Suite Humana'
+    });
+    toClean.push({ collection: 'topup_requests', docId: duplicateTopup.id });
+
+    try {
+      await TopupService.reconcileTopup(duplicateTopup.id, bankMovementExact, operatorId);
+      console.error('FAIL: Debió bloquearse la reutilización del movimiento bancario');
+      process.exit(1);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.assert(message.includes('MOVIMIENTO_YA_ASIGNADO'), 'FAIL: Mensaje inesperado');
+      console.log(`  ✓ Reutilización de movimiento bloqueada: "${message}"`);
+      passedTests++;
+    }
+
   } finally {
     // ------------------------------------------------------------------------
     // LIMPIEZA ABSOLUTA DE DOCUMENTOS DE PRUEBA
