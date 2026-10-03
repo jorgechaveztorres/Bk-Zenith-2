@@ -279,6 +279,22 @@ export const TopupService = {
       throw new Error(`ESTADO_INVALIDO: Solo se pueden aprobar solicitudes en estado REVIEW. Estado actual: ${topup.status}`);
     }
 
+    // La aprobación manual no puede crear una conciliación desde cero.
+    // Debe existir una conciliación REVIEW trazable al movimiento confirmado.
+    if (
+      topup.reconciliation?.status !== 'REVIEW' ||
+      !topup.reconciliation.matchedMovementId ||
+      topup.bankMovementId !== topup.reconciliation.matchedMovementId
+    ) {
+      throw new Error('CONCILIACION_NO_VERIFICABLE: El caso REVIEW no tiene una conciliación trazable a un movimiento confirmado.');
+    }
+
+    const movementRef = db.collection('bank_movements').doc(topup.reconciliation.matchedMovementId);
+    const movementSnap = await movementRef.get();
+    if (!movementSnap.exists || movementSnap.data()?.matchedTopupId !== topupId) {
+      throw new Error('MOVIMIENTO_NO_VERIFICADO: No existe un movimiento bancario confirmado y vinculado a esta recarga.');
+    }
+
     const nowIso = new Date().toISOString();
     const approvedAudit: TopupAuditEntry = {
       fromStatus: 'REVIEW',
