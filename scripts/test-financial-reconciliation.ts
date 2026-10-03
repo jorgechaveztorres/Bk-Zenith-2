@@ -5,6 +5,7 @@ if (!process.env.FIRESTORE_EMULATOR_HOST) {
 }
 
 const { db } = await import('../server/config/firebase');
+const { RideSettlementService } = await import('../server/services/ride-settlement.service');
 const { FinancialReconciliationService } = await import('../server/services/financial-reconciliation.service');
 
 const suffix = Date.now().toString(36);
@@ -13,38 +14,74 @@ const passengerId = 'recon-passenger-' + suffix;
 const healthyRideId = 'recon-healthy-' + suffix;
 const brokenRideId = 'recon-broken-' + suffix;
 
-async function main() {
-  await db.collection('users').doc(driverId).set({
-    role: 'driver',
-    wallet: {
-      availableBalance: -2.6,
-      digitalBalance: -2.6,
-      dailyEarnings: 17.4,
-      weeklyEarnings: 17.4,
-      monthlyEarnings: 17.4,
-      accumulatedCommission: 2.6,
-      movements: [{
-        id: 'settlement_' + healthyRideId,
-        type: 'platform_commission',
-        amount: -2.6,
-        description: 'Comisión Zénith',
-        referenceId: healthyRideId
-      }]
-    }
-  });
+const baseWallet = {
+  availableBalance: 0,
+  digitalBalance: 0,
+  dailyEarnings: 0,
+  weeklyEarnings: 0,
+  monthlyEarnings: 0,
+  accumulatedCommission: 0,
+  cashDebt: 0,
+  movements: []
+};
 
-  await db.collection('users').doc(passengerId).set({ role: 'passenger' });
-
-  await db.collection('rides').doc(healthyRideId).set({
+async function seedRide(rideId: string) {
+  await db.collection('rides').doc(rideId).set({
     passengerId,
     driverId,
-    status: 'COMPLETED',
+    status: 'IN_PROGRESS',
     protectedPrice: 20,
-    settlementId: 'SETTLE_' + healthyRideId
+    finalPrice: 20,
+    currency: 'PEN',
+    paymentMethod: 'wallet',
+    paymentState: 'AUTHORIZED'
+  });
+}
+
+async function main() {
+  await db.collection('users').doc(driverId).set({ role: 'driver', wallet: { ...baseWallet } });
+  await db.collection('users').doc(passengerId).set({ role: 'passenger', wallet: { ...baseWallet } });
+
+  await seedRide(healthyRideId);
+  await db.collection('drivers_online').doc(driverId).set({
+    driverId,
+    status: 'BUSY',
+    currentRideId: healthyRideId
   });
 
-  await db.collection('ride_settlements').doc('SETTLE_' + healthyRideId).set({
-    settlementId: 'SETTLE_' + healthyRideId,
+  const settlement = await RideSettlementService.completeRide(healthyRideId, driverId);
+  assert.equal(settlement._idempotent, false);
+
+  let report = await FinancialReconciliationService.audit();
+  assert.equal(report.ok, true);
+  assert.equal(report.issues.length, 0);
+
+  // 1. Completed ride without settlement.
+  await seedRide(brokenRideId);
+  await db.collection('rides').doc(brokenRideId).update({ status: 'COMPLETED' });
+
+  report = await FinancialReconciliationService.audit();
+  assert.ok(report.issues.some(issue => issue.code === 'COMPLETED_RIDE_WITHOUT_SETTLEMENT'));
+
+  // 2. Orphan settlement.
+  const orphanSettlementId = 'SETTLE_ORPHAN_' + suffix;
+  await db.collection('ride_settlements').doc(orphanSettlementId).set({
+    settlementId: orphanSettlementId,
+    rideId: 'missing-ride-' + suffix,
+    driverId,
+    grossAmount: 10,
+    commission: 1.3,
+    driverNet: 8.7,
+    settlementState: 'SETTLED'
+  });
+
+  report = await FinancialReconciliationService.audit();
+  assert.ok(report.issues.some(issue => issue.code === 'SETTLEMENT_WITHOUT_RIDE'));
+
+  // 3. Duplicate settlement for an existing ride.
+  const duplicateSettlementId = 'SETTLE_DUP_' + suffix;
+  await db.collection('ride_settlements').doc(duplicateSettlementId).set({
+    settlementId: duplicateSettlementId,
     rideId: healthyRideId,
     driverId,
     grossAmount: 20,
@@ -53,64 +90,42 @@ async function main() {
     settlementState: 'SETTLED'
   });
 
-  await db.collection('accounting_ledger').doc('SETTLE_' + healthyRideId).set({
-    id: 'SETTLE_' + healthyRideId,
-    type: 'RIDE_SETTLEMENT',
-    rideId: healthyRideId,
-    debitTotal: 2.6,
-    creditTotal: 2.6
-  });
-
-  let report = await FinancialReconciliationService.audit();
-  assert.equal(report.ok, true);
-  assert.equal(report.issues.length, 0);
-
-  await db.collection('rides').doc(brokenRideId).set({
-    passengerId,
-    driverId,
-    status: 'COMPLETED',
-    protectedPrice: 10,
-    settlementId: 'SETTLE_' + brokenRideId
-  });
-
   report = await FinancialReconciliationService.audit();
-  assert.equal(report.ok, false);
-  assert.ok(report.issues.some(issue => issue.code === 'COMPLETED_RIDE_WITHOUT_SETTLEMENT'));
+  assert.ok(report.issues.some(issue => issue.code === 'DUPLICATE_SETTLEMENT'));
 
-  await db.collection('ride_settlements').doc('SETTLE_ORPHAN_' + suffix).set({
-    settlementId: 'SETTLE_ORPHAN_' + suffix,
+  // 4. Orphan ride-settlement ledger.
+  const orphanLedgerId = 'SETTLE_LEDGER_ORPHAN_' + suffix;
+  await db.collection('accounting_ledger').doc(orphanLedgerId).set({
+    id: orphanLedgerId,
+    type: 'RIDE_SETTLEMENT',
     rideId: 'missing-ride-' + suffix,
     driverId,
     grossAmount: 10,
     commission: 1.3,
-    driverNet: 8.7
+    driverNet: 8.7,
+    debitTotal: 1.3,
+    creditTotal: 1.3,
+    balanced: true,
+    lines: [
+      { account: 'PASIVO_WALLET_MOTORIZADO', side: 'DEBIT', amount: 1.3 },
+      { account: 'INGRESO_COMISION_ZENITH', side: 'CREDIT', amount: 1.3 }
+    ]
   });
 
   report = await FinancialReconciliationService.audit();
-  assert.ok(report.issues.some(issue => issue.code === 'SETTLEMENT_WITHOUT_RIDE'));
+  assert.ok(report.issues.some(issue => issue.code === 'LEDGER_WITHOUT_SETTLEMENT'));
 
-  await db.collection('ride_settlements').doc('SETTLE_DUP_' + suffix + '_A').set({
-    settlementId: 'SETTLE_DUP_' + suffix + '_A',
-    rideId: healthyRideId,
-    driverId,
-    grossAmount: 20,
-    commission: 2.6,
-    driverNet: 17.4
-  });
-  await db.collection('ride_settlements').doc('SETTLE_DUP_' + suffix + '_B').set({
-    settlementId: 'SETTLE_DUP_' + suffix + '_B',
-    rideId: healthyRideId,
-    driverId,
-    grossAmount: 20,
-    commission: 2.6,
-    driverNet: 17.4
+  // 5. Settlement amount tampering.
+  await db.collection('ride_settlements').doc('SETTLE_' + healthyRideId).update({
+    commission: 9.99
   });
 
   report = await FinancialReconciliationService.audit();
-  assert.ok(report.issues.some(issue => issue.code === 'DUPLICATE_SETTLEMENT'));
+  assert.ok(report.issues.some(issue => issue.code === 'COMMISSION_MISMATCH'));
+  assert.ok(report.issues.some(issue => issue.code === 'UNBALANCED_LEDGER'));
 
   console.log('FINANCIAL RECONCILIATION TEST: PASS');
-  console.log('PASS: completed rides, orphan settlements, duplicate settlements, ledger and wallet integrity');
+  console.log('PASS: real settlement contract + missing/orphan/duplicate/tampered financial records');
 }
 
 main().catch((error) => {
