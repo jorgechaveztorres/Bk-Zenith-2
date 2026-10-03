@@ -25,11 +25,8 @@ export const WalletService = {
           retainedBalance: loadedWallet.retainedBalance !== undefined ? loadedWallet.retainedBalance : 0.00,
           dailyEarnings: loadedWallet.dailyEarnings !== undefined ? loadedWallet.dailyEarnings : 0.00,
           weeklyEarnings: loadedWallet.weeklyEarnings !== undefined ? loadedWallet.weeklyEarnings : 0.00,
-          pendingSettlement: loadedWallet.pendingSettlement !== undefined ? loadedWallet.pendingSettlement : 0.00,
           digitalBalance: loadedWallet.digitalBalance !== undefined ? loadedWallet.digitalBalance : 0.00,
           cashDebt: loadedWallet.cashDebt !== undefined ? loadedWallet.cashDebt : 0.00,
-          todaySettlements: loadedWallet.todaySettlements !== undefined ? loadedWallet.todaySettlements : 0,
-          nextSettlementDate: loadedWallet.nextSettlementDate || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
           movements: loadedWallet.movements || [],
           
           // Wallet V2 extensions
