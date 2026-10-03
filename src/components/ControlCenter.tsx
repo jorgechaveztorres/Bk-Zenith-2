@@ -673,7 +673,6 @@ export default function ControlCenter({ user, onUserUpdate }: ControlCenterProps
               <span>Cargar Fondos (Depósito)</span>
             </button>
 
->
           </div>
 
           {/* DEPOSIT MODAL */}
