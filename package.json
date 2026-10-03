@@ -20,7 +20,7 @@
     "emulators:export": "firebase emulators:export ./test/emulator-data",
     "test:sandbox": "firebase emulators:exec --project gen-lang-client-0838883154 --only auth,firestore,storage \"npx tsx scripts/virtual-sandbox-runner.ts\"",
     "test:concurrency": "firebase emulators:exec --project gen-lang-client-0838883154 --only auth,firestore,storage \"FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9199 npx tsx scripts/concurrency-sandbox-runner.ts\"",
-    "test:settlement": "firebase emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx scripts/test-ride-settlement.ts\""
+    "test:settlement": "npx firebase-tools@15.32.1 emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx scripts/test-ride-settlement.ts\""
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
