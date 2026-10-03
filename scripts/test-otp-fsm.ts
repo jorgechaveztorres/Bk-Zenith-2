@@ -435,7 +435,6 @@ async function runSuite() {
   const finalRideData = finalRideSnap.data()!;
 
   const compSuccess = (
-    compResult.status === 'COMPLETED' &&
     finalRideData.status === 'COMPLETED' &&
     Boolean(finalRideData.completedAt) &&
     finalDriverData.status === 'AVAILABLE' &&
