@@ -3,6 +3,15 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 
 const PLATFORM_COMMISSION_RATE = 0.13;
 const INTERNAL_WALLET_METHODS = new Set(['wallet', 'zenith_wallet']);
+const EXTERNAL_PAYMENT_METHODS = new Set([
+  'yape',
+  'plin',
+  'yape_plin',
+  'visa',
+  'mastercard',
+  'card',
+  'bank_transfer'
+]);
 
 type WalletData = Record<string, unknown>;
 
@@ -118,6 +127,12 @@ export class RideSettlementService {
       }
 
       const paymentMethod = String(ride.paymentMethod || 'cash').trim().toLowerCase();
+      if (paymentMethod !== 'cash' && !INTERNAL_WALLET_METHODS.has(paymentMethod) && !EXTERNAL_PAYMENT_METHODS.has(paymentMethod)) {
+        const error: Error & { statusCode?: number } = new Error(`Método de pago no soportado para liquidación: '${paymentMethod}'.`);
+        error.statusCode = 400;
+        throw error;
+      }
+
       const commission = money(grossAmount * PLATFORM_COMMISSION_RATE);
       const driverNet = money(grossAmount - commission);
 
