@@ -230,6 +230,31 @@ async function runTestSuite() {
     console.log('  ✓ 0 llamadas a modelos de IA ejecutadas durante todo el ciclo.');
     passedTests++;
 
+    // ==========================================================================
+    // 10. PRUEBA DE BLOQUEO DE ACREDITACIÓN SIN CONCILIACIÓN VERIFICADA
+    // ==========================================================================
+    console.log('\\n[PRUEBA 10] Bloqueo de acreditación sin conciliación VERIFIED trazable...');
+    const forgedTopup = await TopupService.createTopupRequest(testDriverId, 15.00, {
+      name: 'Conductor Suite Humana'
+    });
+    toClean.push({ collection: 'topup_requests', docId: forgedTopup.id });
+
+    await db.collection('topup_requests').doc(forgedTopup.id).update({
+      status: 'VERIFIED',
+      verifiedAmount: 15.00
+    });
+
+    try {
+      await TopupService.creditTopup(forgedTopup.id, operatorId);
+      console.error('FAIL: Debió bloquearse la acreditación sin conciliación trazable');
+      process.exit(1);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.assert(message.includes('CONCILIACION_NO_VERIFICADA'), 'FAIL: Mensaje inesperado');
+      console.log(`  ✓ Acreditación fraudulenta bloqueada: "${message}"`);
+      passedTests++;
+    }
+
   } finally {
     // ------------------------------------------------------------------------
     // LIMPIEZA ABSOLUTA DE DOCUMENTOS DE PRUEBA
