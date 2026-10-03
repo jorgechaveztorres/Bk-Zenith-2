@@ -1,5 +1,7 @@
 name: ZENITH Phase 3.4 Financial Reconciliation Audit
 
+# CI trigger validation for Phase 3.4.
+
 on:
   push:
     branches:
