@@ -52,9 +52,6 @@ export interface CreateRidePayload {
   passengerId: string;
   passengerName?: string;
   passengerPhone?: string;
-  paymentMethod?: string;
-  paymentState?: string;
-  paymentId?: string;
   idempotencyKey?: string;
   orderType?: 'RIDE' | 'DELIVERY';
   packageInfo?: any;
@@ -204,9 +201,6 @@ export class RideService {
         quoteId: quote.quoteId,
         pricingSeal: quote.pricingSeal,
         pricingVersion: quote.pricingVersion,
-        paymentMethod: payload.paymentMethod || 'cash',
-        paymentState: payload.paymentState || 'AUTHORIZED',
-        paymentId: payload.paymentId || `tx_${Date.now()}`,
         status: 'SEARCHING_DRIVER',
         // Generación Segura de OTP Criptográfico Server-Side
         otpHash,
