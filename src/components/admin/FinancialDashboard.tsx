@@ -15,23 +15,12 @@ import {
   TrendingUp, 
   DollarSign, 
   ShieldAlert, 
-  CheckCircle2, 
   AlertTriangle, 
   ShieldCheck, 
-  ArrowUpRight, 
-  ArrowDownLeft, 
   Clock, 
   Receipt 
 } from 'lucide-react';
 
-  id: string;
-  driverId: string;
-  driverName?: string;
-  amount: number;
-  bankAccount: string;
-  status: 'PENDING' | 'PROCESSED' | 'FAILED';
-  createdAt: string;
-}
 
 interface FinancialMetric {
   totalVolume: number;
