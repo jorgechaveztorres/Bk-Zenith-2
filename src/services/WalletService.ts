@@ -25,20 +25,8 @@ export const WalletService = {
     return data.wallet;
   },
 
-  creditRideEarnings: async (_userId: string, _amount: number, _rideId: string, _passengerName: string) => {
-    return;
-  },
-
   creditCompensation: async (userId: string, amount: number, rideId: string, reason: string): Promise<void> => {
     console.warn('[WALLET-COMPENSATION] La compensación directa debe registrarse mediante proceso auditado.');
-  },
-
-  /**
-   * @deprecated El depósito arbitrario ha sido deshabilitado permanentemente.
-   * Utilice requestTopup() para el flujo seguro de recarga vía Yape.
-   */
-  depositFunds: async (_userId: string, _amount: number, _method: string): Promise<Wallet> => {
-    throw new Error('DEPRECATED: El depósito arbitrario está deshabilitado. Utilice WalletService.createTopupRequest() para el flujo seguro V1.');
   },
 
   withdrawFunds: async (userId: string, amount: number, bankDetails: string): Promise<Wallet> => {
