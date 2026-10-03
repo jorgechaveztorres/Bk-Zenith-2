@@ -16,14 +16,6 @@ export const walletController = {
     }
   },
 
-  depositFunds: async (req: Request, res: Response) => {
-    // FASE 1: El depósito arbitrario ha sido permanentemente deshabilitado por seguridad financiera.
-    return res.status(403).json({
-      success: false,
-      message: 'DEPRECATED_INSECURE_ENDPOINT: El depósito arbitrario ha sido deshabilitado permanentemente. Utilice el flujo seguro de recargas verificadas /api/topups.'
-    });
-  },
-
   withdrawFunds: async (req: Request, res: Response) => {
     try {
       const { userId, amount, bankDetails } = req.body;
