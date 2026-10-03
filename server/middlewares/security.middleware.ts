@@ -39,5 +39,4 @@ export const configureSecurity = (app: Express) => {
     message: { success: false, message: 'Límite de intentos de pago excedido.' }
   });
   app.use('/api/payments', paymentLimiter);
-  app.use('/api/settlements', paymentLimiter);
 };
