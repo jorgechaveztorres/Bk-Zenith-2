@@ -93,11 +93,8 @@ export class DriverService {
         dailyEarnings: 0.00,
         weeklyEarnings: 0.00,
         movements: [],
-        pendingSettlement: 0.00,
         digitalBalance: 0.00,
         cashDebt: 0.00,
-        todaySettlements: 0,
-        nextSettlementDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
       };
 
       // Create initial driver profile conforming to sprint requirements
