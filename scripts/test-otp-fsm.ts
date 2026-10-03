@@ -331,8 +331,8 @@ async function runSuite() {
   await setupDriver(seqDriver, 'AVAILABLE');
 
   const seqAccept: any = await RideService.acceptRide(seqRide.id, seqDriver);
-  const seqArriving = await RideService.updateRideStatus(seqRide.id, seqDriver, 'DRIVER_ARRIVING');
-  const seqWaiting = await RideService.updateRideStatus(seqRide.id, seqDriver, 'WAITING_FOR_OTP');
+  const seqArriving: any = await RideService.updateRideStatus(seqRide.id, seqDriver, 'DRIVER_ARRIVING');
+  const seqWaiting: any = await RideService.updateRideStatus(seqRide.id, seqDriver, 'WAITING_FOR_OTP');
 
   const seqPass = (
     seqAccept.status === 'DRIVER_ASSIGNED' &&
