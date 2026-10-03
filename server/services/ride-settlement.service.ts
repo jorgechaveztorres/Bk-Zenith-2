@@ -178,7 +178,7 @@ export class RideSettlementService {
         rideId,
         INTERNAL_WALLET_METHODS.has(paymentMethod)
           ? `Ganancia neta viaje #${rideId.substring(0, 8)}`
-          : `Comisión Zénith (15%) viaje #${rideId.substring(0, 8)}`,
+          : `Comisión Zénith (13%) viaje #${rideId.substring(0, 8)}`,
         cashCollected
       );
 
