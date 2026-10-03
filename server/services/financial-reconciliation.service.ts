@@ -47,7 +47,7 @@ export const FinancialReconciliationService = {
     const [ridesSnap, settlementsSnap, ledgerSnap] = await Promise.all([
       db.collection('rides').get(),
       db.collection('ride_settlements').get(),
-      db.collection('accounting_ledger').where('type', '==', 'RIDE_SETTLEMENT').get()
+      db.collection('accounting_ledger').get()
     ]);
 
     const issues: FinancialReconciliationIssue[] = [];
@@ -72,6 +72,8 @@ export const FinancialReconciliationService = {
 
     ledgerSnap.forEach((doc) => {
       const data = doc.data() as Record<string, unknown>;
+      const isRideLedger = data.type === 'RIDE_SETTLEMENT' || typeof data.rideId === 'string' || doc.id.startsWith('SETTLE_');
+      if (!isRideLedger) return;
       ledgers.set(doc.id, data);
       const rideId = stringField(data.rideId);
       if (rideId) {
