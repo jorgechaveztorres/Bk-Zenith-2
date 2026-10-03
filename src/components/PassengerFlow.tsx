@@ -21,7 +21,7 @@ import Chat from './Chat';
 import ShareRide from './ShareRide';
 import SOSButton from './SOSButton';
 import ScheduledRides from './ScheduledRides';
-import { MessageSquare, RefreshCw, Radio, Compass } from 'lucide-react';
+import { MessageSquare, RefreshCw, Radio, Compass, CreditCard } from 'lucide-react';
 import { 
   MapPin, 
   DollarSign, 
