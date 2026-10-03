@@ -20,7 +20,8 @@
     "emulators:export": "firebase emulators:export ./test/emulator-data",
     "test:sandbox": "firebase emulators:exec --project gen-lang-client-0838883154 --only auth,firestore,storage \"npx tsx scripts/virtual-sandbox-runner.ts\"",
     "test:concurrency": "firebase emulators:exec --project gen-lang-client-0838883154 --only auth,firestore,storage \"FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9199 npx tsx scripts/concurrency-sandbox-runner.ts\"",
-    "test:settlement": "npx firebase-tools@15.32.1 emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx scripts/test-ride-settlement.ts\""
+    "test:settlement": "npx firebase-tools@15.32.1 emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx scripts/test-ride-settlement.ts\"",
+    "test:financial-reconciliation": "npx firebase-tools@15.32.1 emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx scripts/test-financial-reconciliation.ts\""
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -45,8 +46,7 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
-    "esbuild": "^0.28.1",
-    "tailwindcss": "^4.1.14",
+    "tailwindcss": "^4.1.21",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.3"
