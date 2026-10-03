@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import settlementRoutes from './settlement.routes';
 import rideRoutes from './ride.routes';
 import walletRoutes from './wallet.routes';
 import auditRoutes from './audit.routes';
@@ -10,7 +9,6 @@ import pricingRoutes from './pricing.routes';
 
 const router = Router();
 
-router.use('/settlements', settlementRoutes);
 router.use('/rides', rideRoutes);
 router.use('/wallet', walletRoutes);
 router.use('/topups', topupRoutes);
