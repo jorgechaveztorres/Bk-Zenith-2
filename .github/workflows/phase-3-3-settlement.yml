@@ -1,4 +1,4 @@
-name: ZENITH Phase 3.3 Settlement Audit
+name: ZENITH Phase 3.4 Financial Reconciliation Audit
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  settlement-audit:
+  financial-reconciliation-audit:
     runs-on: ubuntu-latest
 
     steps:
@@ -38,5 +38,8 @@ jobs:
       - name: Production build
         run: npm run build
 
-      - name: Ride settlement emulator audit
+      - name: Ride settlement audit
         run: npm run test:settlement
+
+      - name: Financial reconciliation audit
+        run: npm run test:financial-reconciliation
