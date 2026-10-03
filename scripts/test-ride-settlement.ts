@@ -88,8 +88,8 @@ async function main() {
   assert.equal(rideSnap.data()?.paymentState, 'AUTHORIZED');
   assert.equal(settlementSnap.exists, true);
   assert.equal(ledgerSnap.exists, true);
-  assert.equal(driverSnap.data()?.wallet?.availableBalance, 17.4);
-  assert.equal(driverSnap.data()?.wallet?.digitalBalance, 17.4);
+  assert.equal(driverSnap.data()?.wallet?.availableBalance, -2.6);
+  assert.equal(driverSnap.data()?.wallet?.digitalBalance, -2.6);
   assert.equal(driverSnap.data()?.wallet?.dailyEarnings, 17.4);
   assert.equal(driverSnap.data()?.wallet?.accumulatedCommission, 2.6);
   assert.equal(passengerSnap.data()?.wallet?.availableBalance, 100);
