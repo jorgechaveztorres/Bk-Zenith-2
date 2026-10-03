@@ -1,7 +1,7 @@
 import { db } from '../config/firebase';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 
-const PLATFORM_COMMISSION_RATE = 0.13;
+export const PLATFORM_COMMISSION_RATE = 0.13;
 
 type WalletData = Record<string, unknown>;
 
