@@ -55,7 +55,6 @@ import {
   Bell,
   Wallet as WalletIcon,
   Download,
-  Upload,
   Layers,
   Sparkles,
   Calendar,
@@ -229,10 +228,7 @@ export default function ControlCenter({ user, onUserUpdate }: ControlCenterProps
 
   // Wallet operations state
   const [showDepositModal, setShowDepositModal] = useState(false);
-  const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
   const [walletAmount, setWalletAmount] = useState<number>(50);
-  const [withdrawalBank, setWithdrawalBank] = useState('Banco de Crédito (BCP)');
-  const [withdrawalAccount, setWithdrawalAccount] = useState('');
   const [depositMethod, setDepositMethod] = useState('Yape / Plin');
 
   // Default User Settings
@@ -423,27 +419,6 @@ export default function ControlCenter({ user, onUserUpdate }: ControlCenterProps
     }
   };
 
-  // Withdraw funds
-  const handleWithdrawal = async () => {
-    if (walletAmount <= 0 || !withdrawalAccount) return;
-    if ((user.wallet?.availableBalance || 0) < walletAmount) {
-      alert('Saldo insuficiente');
-      return;
-    }
-    setSyncing(true);
-    try {
-      const details = `${withdrawalBank} - Cuenta: ${withdrawalAccount}`;
-      const updatedWallet = await WalletService.withdrawFunds(user.uid, walletAmount, details);
-      onUserUpdate({ ...user, wallet: updatedWallet });
-      setShowWithdrawalModal(false);
-      setWithdrawalAccount('');
-      triggerToast(`Retiro de $${walletAmount} enviado a procesamiento.`);
-    } catch (err) {
-      console.error("[ZENITH-ERROR] Withdrawal failed:", err);
-    } finally {
-      setSyncing(false);
-    }
-  };
 
   // Commercial Dashboard Analytics & Recaps
   const completedRidesList = historyRides.filter(r => r.status === RideStatus.COMPLETED);
@@ -662,7 +637,7 @@ export default function ControlCenter({ user, onUserUpdate }: ControlCenterProps
               <div className="hud-card p-5 bg-black/40 border-white/5 text-left space-y-1">
                 <p className="text-[9px] font-mono text-gray-500 uppercase">Saldo Disponible</p>
                 <p className="text-4xl font-black text-[#39FF14] mono-data italic">${user.wallet?.availableBalance.toFixed(2) ?? '0.00'}</p>
-                <p className="text-[9px] font-mono text-gray-600 uppercase">Fondos liberados para retiro</p>
+                <p className="text-[9px] font-mono text-gray-600 uppercase">Saldo disponible para operaciones</p>
               </div>
 
               <div className="hud-card p-5 bg-black/40 border-white/5 text-left space-y-1">
@@ -698,16 +673,7 @@ export default function ControlCenter({ user, onUserUpdate }: ControlCenterProps
               <span>Cargar Fondos (Depósito)</span>
             </button>
 
-            <button
-              onClick={() => {
-                setWalletAmount(50);
-                setShowWithdrawalModal(true);
-              }}
-              className="py-4 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-2xl font-mono text-xs uppercase font-black transition-all flex items-center justify-center gap-2"
-            >
-              <Upload size={16} />
-              <span>Retirar Fondos</span>
-            </button>
+>
           </div>
 
           {/* DEPOSIT MODAL */}
@@ -765,74 +731,7 @@ export default function ControlCenter({ user, onUserUpdate }: ControlCenterProps
             )}
           </AnimatePresence>
 
-          {/* WITHDRAWAL MODAL */}
-          <AnimatePresence>
-            {showWithdrawalModal && (
-              <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  className="bg-[#050505] border border-white/10 w-full max-w-md rounded-2xl p-6 relative space-y-6"
-                >
-                  <div className="flex items-center justify-between border-b border-white/10 pb-4">
-                    <h3 className="text-lg font-black uppercase italic tracking-tight flex items-center gap-2">
-                      <Upload className="text-white" size={18} />
-                      Solicitar Retiro de Fondos
-                    </h3>
-                    <button onClick={() => setShowWithdrawalModal(false)} className="text-gray-400 hover:text-white">✕</button>
-                  </div>
 
-                  <div className="space-y-4 text-left font-mono text-xs">
-                    <div>
-                      <label className="text-[9px] text-gray-500 uppercase tracking-widest mb-1 block">Monto a Retirar ($)</label>
-                      <input 
-                        type="number" 
-                        value={walletAmount}
-                        onChange={(e) => setWalletAmount(Number(e.target.value))}
-                        className="w-full bg-black border border-white/10 p-3 rounded-xl text-xl font-bold italic text-white"
-                      />
-                      <p className="text-[9px] text-gray-600 mt-1 uppercase">Saldo Máximo Disponible: ${user.wallet?.availableBalance.toFixed(2)}</p>
-                    </div>
-
-                    <div>
-                      <label className="text-[9px] text-gray-500 uppercase tracking-widest mb-1 block">Entidad Bancaria</label>
-                      <select 
-                        value={withdrawalBank}
-                        onChange={(e) => setWithdrawalBank(e.target.value)}
-                        className="w-full bg-black border border-white/10 p-3 rounded-xl text-xs text-white"
-                      >
-                        <option value="Banco de Crédito (BCP)">Banco de Crédito (BCP)</option>
-                        <option value="Interbank">Interbank</option>
-                        <option value="BBVA Continental">BBVA Continental</option>
-                        <option value="Yape / Plin">Yape / Plin (Celular)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-[9px] text-gray-500 uppercase tracking-widest mb-1 block">Número de Cuenta o Celular</label>
-                      <input 
-                        type="text" 
-                        required
-                        placeholder="Ingresa cuenta CCI o teléfono"
-                        value={withdrawalAccount}
-                        onChange={(e) => setWithdrawalAccount(e.target.value)}
-                        className="w-full bg-black border border-white/10 p-3 rounded-xl text-xs text-white"
-                      />
-                    </div>
-
-                    <button 
-                      onClick={handleWithdrawal}
-                      disabled={syncing || walletAmount <= 0 || !withdrawalAccount || walletAmount > (user.wallet?.availableBalance || 0)}
-                      className="w-full bg-[#39FF14] text-black py-4 rounded-xl font-black uppercase tracking-tight text-xs hover:scale-[1.01] transition-all disabled:opacity-50"
-                    >
-                      Confirmar Retiro
-                    </button>
-                  </div>
-                </motion.div>
-              </div>
-            )}
-          </AnimatePresence>
 
           {/* Movements History */}
           <div className="space-y-4">
