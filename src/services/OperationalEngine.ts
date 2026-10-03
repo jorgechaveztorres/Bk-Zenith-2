@@ -512,7 +512,6 @@ export class OperationalEngine {
       passengerId: solicitante.uid,
       passengerName: solicitante.name,
       passengerPhone: solicitante.phone || '',
-      paymentMethod: 'cash',
       orderType: 'DELIVERY',
       packageInfo: origRide.packageInfo,
       receptor,
