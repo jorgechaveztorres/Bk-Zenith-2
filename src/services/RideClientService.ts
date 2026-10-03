@@ -5,9 +5,6 @@ export interface RequestRidePayload {
   passengerId: string;
   passengerName?: string;
   passengerPhone?: string;
-  paymentMethod?: string;
-  paymentState?: string;
-  paymentId?: string;
   idempotencyKey?: string;
   orderType?: 'RIDE' | 'DELIVERY';
   packageInfo?: any;
