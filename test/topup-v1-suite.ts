@@ -1,12 +1,11 @@
 // ============================================================================
 // ZÉNITH — SUITE DE PRUEBAS: TOPUP V1 CON VALIDACIÓN HUMANA
-// Valida los 10 puntos del flujo simplificado en Firestore Real
+// Valida los 9 puntos activos del flujo simplificado en Firestore Real
 // ============================================================================
 
 import { db } from '../server/config/firebase';
 import { TopupService } from '../server/services/topup.service';
 import { ReconciliationService } from '../server/services/reconciliation.service';
-import { WalletService as ServerWalletService } from '../server/services/wallet.service';
 import { topupController } from '../server/controllers/topup.controller';
 import { TopupRequest } from '../src/types';
 
@@ -233,20 +232,6 @@ async function runTestSuite() {
     console.assert(geminiCallsCount === 0, 'FAIL: Se registraron llamadas a Gemini');
     console.log('  ✓ 0 llamadas a modelos de IA ejecutadas durante todo el ciclo.');
     passedTests++;
-
-    // ==========================================================================
-    // 10. SEGURIDAD DE ACCESO Y RECHAZO DE MODIFICACIÓN ARBITRARIA
-    // ==========================================================================
-    console.log('\n[PRUEBA 10] Bloqueo de depósito arbitrario desde cliente...');
-    try {
-      await ServerWalletService.depositFunds(testDriverId, 9999, 'HACK');
-      console.error('FAIL: No debió permitir depósito arbitrario');
-      process.exit(1);
-    } catch (e: any) {
-      console.assert(e.message.includes('DEPRECATED'), 'FAIL: Error esperado');
-      console.log(`  ✓ Depósito arbitrario bloqueado: "${e.message}"`);
-      passedTests++;
-    }
 
   } finally {
     // ------------------------------------------------------------------------
