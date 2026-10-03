@@ -44,3 +44,6 @@ jobs:
 
       - name: Financial reconciliation audit
         run: npm run test:financial-reconciliation
+
+      - name: Yape top-up E2E audit
+        run: npm run test:topup
