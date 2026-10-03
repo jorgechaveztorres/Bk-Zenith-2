@@ -40,8 +40,6 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  CreditCard, 
-  QrCode, 
   History, 
   FileText, 
   PlusCircle, 
@@ -122,7 +120,6 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
   const [passengerFeedback, setPassengerFeedback] = useState<string>('');
 
   // Passenger Payment Center V2 states
-  const [selectedMethod, setSelectedMethod] = useState<'card' | 'yape' | 'plin' | 'cash'>('cash');
   const [promoCode, setPromoCode] = useState('');
   const [appliedPromo, setAppliedPromo] = useState<any>(null);
   const [paymentError, setPaymentError] = useState<string | null>(null);
@@ -350,7 +347,6 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
         passengerId: user.uid,
         passengerName: user.fullName,
         passengerPhone: user.phone || '',
-        paymentMethod: selectedMethod,
         idempotencyKey: `ride_${user.uid}_${pricing.quoteId}`
       });
 
@@ -1085,41 +1081,6 @@ Consulte su comprobante en la web oficial.`;
                     <div>
                       <p className="text-[9px] font-mono text-gray-500 uppercase">Tiempo Estimado</p>
                       <p className="text-xl font-black text-white italic mono-data">{pricing.duration} MIN</p>
-                    </div>
-                  </div>
-
-                  {/* PAYMENT METHOD CHOICES */}
-                  <div className="border-t border-white/5 pt-4 text-left">
-                    <p className="text-[9px] font-mono text-gray-500 uppercase font-black tracking-widest mb-2">Seleccione Método de Pago (Directo al Conductor)</p>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      <button
-                        onClick={() => setSelectedMethod('yape')}
-                        className={`py-2 px-3 border rounded-xl flex flex-col items-center gap-1 cursor-pointer transition-all ${selectedMethod === 'yape' ? 'bg-purple-600/10 border-purple-500 text-purple-400' : 'bg-black/30 border-white/10 text-white hover:border-white/20'}`}
-                      >
-                        <QrCode size={14} />
-                        <span className="text-[9px] font-mono font-bold uppercase">Yape</span>
-                      </button>
-                      <button
-                        onClick={() => setSelectedMethod('plin')}
-                        className={`py-2 px-3 border rounded-xl flex flex-col items-center gap-1 cursor-pointer transition-all ${selectedMethod === 'plin' ? 'bg-cyan-600/10 border-cyan-500 text-cyan-400' : 'bg-black/30 border-white/10 text-white hover:border-white/20'}`}
-                      >
-                        <QrCode size={14} />
-                        <span className="text-[9px] font-mono font-bold uppercase">Plin</span>
-                      </button>
-                      <button
-                        onClick={() => setSelectedMethod('card')}
-                        className={`py-2 px-3 border rounded-xl flex flex-col items-center gap-1 cursor-pointer transition-all ${selectedMethod === 'card' ? 'bg-blue-600/10 border-blue-500 text-blue-400' : 'bg-black/30 border-white/10 text-white hover:border-white/20'}`}
-                      >
-                        <CreditCard size={14} />
-                        <span className="text-[9px] font-mono font-bold uppercase">Tarjeta</span>
-                      </button>
-                      <button
-                        onClick={() => setSelectedMethod('cash')}
-                        className={`py-2 px-3 border rounded-xl flex flex-col items-center gap-1 cursor-pointer transition-all ${selectedMethod === 'cash' ? 'bg-emerald-600/10 border-emerald-500 text-emerald-400' : 'bg-black/30 border-white/10 text-white hover:border-white/20'}`}
-                      >
-                        <DollarSign size={14} />
-                        <span className="text-[9px] font-mono font-bold uppercase">Efectivo</span>
-                      </button>
                     </div>
                   </div>
 
