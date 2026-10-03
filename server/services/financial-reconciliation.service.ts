@@ -7,12 +7,6 @@ const money = (value: unknown): number =>
 const stringField = (value: unknown): string | undefined =>
   typeof value === 'string' && value.length > 0 ? value : undefined;
 
-const countBy = (items: string[]): Map<string, number> => {
-  const counts = new Map<string, number>();
-  for (const item of items) counts.set(item, (counts.get(item) || 0) + 1);
-  return counts;
-};
-
 export type FinancialIssueCode =
   | 'COMPLETED_RIDE_WITHOUT_SETTLEMENT'
   | 'SETTLEMENT_WITHOUT_RIDE'
