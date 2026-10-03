@@ -170,8 +170,7 @@ export default function ScheduledRides({ user }: ScheduledRidesProps) {
         passengerId: sched.passengerId,
         passengerName: sched.passengerName,
         passengerPhone: (sched as any).passengerPhone || user.phone || '999888777',
-        paymentMethod: 'cash',
-        idempotencyKey: `sched_deploy_${sched.id}_${Date.now()}`
+          idempotencyKey: `sched_deploy_${sched.id}_${Date.now()}`
       });
 
       // Update reservation status to active (dispatched)
