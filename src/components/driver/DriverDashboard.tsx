@@ -32,7 +32,6 @@ import { Assignment } from '../../services/AssignmentRepository';
 import RideAssignmentCard from './RideAssignmentCard';
 import { RideClientService } from '../../services/RideClientService';
 import { WalletService } from '../../services/WalletService';
-import { SettlementEngine } from '../../services/SettlementEngine';
 import { DriverTopupModal } from './DriverTopupModal';
 
 interface DriverDashboardProps {
@@ -487,7 +486,7 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
                   <p className="text-lg font-black text-white mt-1 font-mono">
                     S/ {(driverWallet?.accumulatedCommission || 0).toFixed(2)}
                   </p>
-                  <span className="text-[8px] font-mono text-[#39FF14] block mt-1">Comisión del 15% recolectada</span>
+                  <span className="text-[8px] font-mono text-[#39FF14] block mt-1">Comisión del 13% recolectada</span>
                 </div>
 
               </div>
@@ -557,14 +556,11 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
                       setSettlementErrorMsg(null);
                       setSettlementSuccessMsg(null);
                       try {
-                        const result = await SettlementEngine.executeAutomaticSettlement(user.uid, bankAccount);
-                        if (result.success) {
-                          setSettlementSuccessMsg(result.message);
-                          setBankAccount('');
-                          await loadWallet();
-                        } else {
-                          setSettlementErrorMsg(result.message);
-                        }
+                        const amount = Number(driverWallet?.availableBalance || 0);
+                        const updatedWallet = await WalletService.withdrawFunds(user.uid, amount, bankAccount);
+                        setSettlementSuccessMsg(`Liquidación de S/. ${amount.toFixed(2)} procesada exitosamente.`);
+                        setBankAccount('');
+                        setDriverWallet(updatedWallet);
                       } catch (err: any) {
                         setSettlementErrorMsg(err.message || 'Error al procesar la liquidación.');
                       } finally {
