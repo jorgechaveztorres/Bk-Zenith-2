@@ -83,23 +83,25 @@ async function main() {
 
   assert.equal(rideSnap.data()?.status, 'COMPLETED');
   assert.equal(rideSnap.data()?.settlementState, 'SETTLED');
-  assert.equal(rideSnap.data()?.paymentState, 'SETTLED');
+  // The settlement service does not capture or settle passenger payments.
+  // Payment remains AUTHORIZED while the platform commission is settled.
+  assert.equal(rideSnap.data()?.paymentState, 'AUTHORIZED');
   assert.equal(settlementSnap.exists, true);
   assert.equal(ledgerSnap.exists, true);
   assert.equal(driverSnap.data()?.wallet?.availableBalance, 17.4);
   assert.equal(driverSnap.data()?.wallet?.digitalBalance, 17.4);
   assert.equal(driverSnap.data()?.wallet?.dailyEarnings, 17.4);
   assert.equal(driverSnap.data()?.wallet?.accumulatedCommission, 2.6);
-  assert.equal(passengerSnap.data()?.wallet?.availableBalance, 80);
-  assert.equal(passengerSnap.data()?.wallet?.digitalBalance, 80);
+  assert.equal(passengerSnap.data()?.wallet?.availableBalance, 100);
+  assert.equal(passengerSnap.data()?.wallet?.digitalBalance, 100);
   assert.equal(presenceSnap.data()?.status, 'AVAILABLE');
   assert.equal(presenceSnap.data()?.currentRideId, null);
 
   const ledger = ledgerSnap.data();
   assert.equal(ledger?.balanced, true);
-  assert.equal(ledger?.debitTotal, 20);
-  assert.equal(ledger?.creditTotal, 20);
-  assert.equal(ledger?.lines?.length, 3);
+  assert.equal(ledger?.debitTotal, 2.6);
+  assert.equal(ledger?.creditTotal, 2.6);
+  assert.equal(ledger?.lines?.length, 2);
 
   const retry = await RideSettlementService.completeRide(rideId, driverId);
   assert.equal(retry._idempotent, true);
@@ -140,9 +142,8 @@ async function main() {
   assert.equal(cashLedger.data()?.creditTotal, 2.6);
   assert.equal(cashLedger.data()?.lines?.length, 2);
 
-
   console.log('RIDE SETTLEMENT TEST: PASS');
-  console.log('PASS: concurrent idempotency + internal wallet + accounting balance + cash settlement');
+  console.log('PASS: concurrent idempotency + platform commission settlement + accounting balance + cash settlement');
 }
 
 main().catch((error) => {
