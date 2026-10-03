@@ -232,38 +232,5 @@ export const WalletService = {
     });
   },
 
-  // Record Withdrawal
-  withdrawFunds: async (userId: string, amount: number, bankDetails: string) => {
-    if (!db) throw new Error("Base de datos no disponible.");
-    const userDocRef = db.collection('users').doc(userId);
-    const snap = await userDocRef.get();
-    if (!snap.exists) throw new Error("User profile not found");
 
-    const userData = snap.data();
-    const currentWallet = userData?.wallet;
-    if (!currentWallet || currentWallet.availableBalance < amount) {
-      throw new Error("Saldo disponible insuficiente");
-    }
-
-    const newMov = {
-      id: `mov_wtd_${Date.now()}`,
-      type: 'withdrawal',
-      amount: amount,
-      description: `Retiro procesado a: ${bankDetails}`,
-      createdAt: Timestamp.now()
-    };
-
-    const updatedWallet = {
-      ...currentWallet,
-      availableBalance: Number((currentWallet.availableBalance - amount).toFixed(2)),
-      digitalBalance: currentWallet.digitalBalance !== undefined ? Number((currentWallet.digitalBalance - amount).toFixed(2)) : Number((currentWallet.availableBalance - amount).toFixed(2)),
-      movements: [newMov, ...(currentWallet.movements || [])]
-    };
-
-    await userDocRef.update({
-      wallet: updatedWallet
-    });
-
-    return updatedWallet;
-  }
 };
