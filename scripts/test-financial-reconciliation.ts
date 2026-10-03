@@ -97,7 +97,7 @@ async function main() {
   const orphanLedgerId = 'SETTLE_LEDGER_ORPHAN_' + suffix;
   await db.collection('accounting_ledger').doc(orphanLedgerId).set({
     id: orphanLedgerId,
-    type: 'RIDE_SETTLEMENT',
+    type: 'BROKEN_RIDE_LEDGER',
     rideId: 'missing-ride-' + suffix,
     driverId,
     grossAmount: 10,
