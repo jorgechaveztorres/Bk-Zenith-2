@@ -60,13 +60,10 @@ export const VIRTUAL_SANDBOX_USERS = {
       digitalBalance: 50.00,
       retainedBalance: 0.00,
       cashDebt: 0.00,
-      pendingSettlement: 0.00,
       accumulatedCommission: 0.00,
       dailyEarnings: 0.00,
       weeklyEarnings: 0.00,
       movements: [],
-      todaySettlements: 0,
-      nextSettlementDate: '2026-10-01T00:00:00.000Z'
     }
   },
   // Segundo motorizado para pruebas reales de concurrencia
