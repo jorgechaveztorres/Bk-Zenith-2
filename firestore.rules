@@ -160,7 +160,7 @@ service cloud.firestore {
     // Topup Requests (Solicitudes de Recarga de Wallet V1 - Piloto Yape)
     match /topup_requests/{topupId} {
       allow get: if isSignedIn() && (resource.data.driverId == request.auth.uid || isAdmin());
-      allow list: if isSignedIn(); // Filtrado por driverId en consultas del cliente
+      allow list: if isSignedIn() && (resource.data.driverId == request.auth.uid || isAdmin()); // Solo historial propio del motorizado o administración
       allow write: if false; // Modificaciones de estado y saldo ocurren exclusivamente en Backend Express
     }
 
