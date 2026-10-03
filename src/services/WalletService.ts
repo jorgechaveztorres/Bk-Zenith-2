@@ -29,16 +29,7 @@ export const WalletService = {
     console.warn('[WALLET-COMPENSATION] La compensación directa debe registrarse mediante proceso auditado.');
   },
 
-  withdrawFunds: async (userId: string, amount: number, bankDetails: string): Promise<Wallet> => {
-    const headers = await getAuthHeaders();
-    const res = await fetch('/api/wallet/withdraw', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ userId, amount, bankDetails })
-    });
-    const data = await res.json();
-    return data.wallet;
-  },
+
 
   // ============================================================================
   // MÉTODOS DEL FLUJO V1 — RECARGAS WALLET CON YAPE PERSONAL
