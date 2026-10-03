@@ -12,7 +12,7 @@ export interface FinancialTransaction {
 
 export interface SettlementBreakdown {
   driverEarnings: number; // Monto neto acreditado al conductor
-  platformFee: number; // Tarifa de comisión de Zénith (p. ej., 15%)
+  platformFee: number; // Tarifa de comisión de Zénith (13%)
   cashCollectedByUser: number; // Efectivo recaudado en mano por el conductor (0 si es digital)
   balanceAdjustment: number; // Compensación automática cargada a la billetera (negativo si cobró en efectivo)
 }
@@ -23,7 +23,7 @@ export interface IFinancialEngine {
 }
 
 export class FinancialEngineClass implements IFinancialEngine {
-  private readonly PLATFORM_COMMISSION_RATE = 0.15; // 15% de comisión fija de Zénith
+  private readonly PLATFORM_COMMISSION_RATE = 0.13; // 13% de comisión fija de Zénith
 
   /**
    * Procesa la liquidación operativa de un viaje según el método de pago
