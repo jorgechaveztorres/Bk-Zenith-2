@@ -7,7 +7,7 @@
 
 import { db } from '../config/firebase';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-// import { Wallet, WalletMovement } from '../types'; 
+import { TopupRequest, Wallet, WalletMovement } from '../../src/types'; 
 
 export const WalletService = {
   // Initialize wallet V2 for any user (passenger or driver)
@@ -88,15 +88,19 @@ export const WalletService = {
         throw new Error(`RECARGA_NO_ENCONTRADA: La solicitud ${topupId} no existe.`);
       }
 
-      const topupData = topupSnap.data() as any;
+      const topupData = topupSnap.data() as TopupRequest;
 
       // 2. Confirmar status === VERIFIED
       if (topupData.status !== 'VERIFIED') {
         throw new Error(`ESTADO_INVALIDO: Solo se pueden acreditar recargas en estado VERIFIED. Estado actual: ${topupData.status}`);
       }
 
-      // 3. Confirmar que no esté CREDITED
-      if (topupData.status === 'CREDITED' || topupData.creditedAt) {
+      // 3. La acreditación solo procede desde una conciliación VERIFIED con movimiento trazable.
+      if (topupData.status !== 'VERIFIED' || topupData.reconciliation?.status !== 'VERIFIED' || !topupData.reconciliation.matchedMovementId) {
+        throw new Error('CONCILIACION_NO_VERIFICADA: La recarga no tiene una conciliación VERIFIED y trazable.');
+      }
+
+      if (topupData.creditedAt) {
         throw new Error(`IDEMPOTENCIA: La recarga ${topupId} ya fue acreditada previamente.`);
       }
 
@@ -107,7 +111,7 @@ export const WalletService = {
       }
 
       // 4. Confirmar que el movimiento no haya sido utilizado anteriormente
-      const movementFingerprint = topupData.reconciliation?.matchedMovementId || `FPR-${topupData.id}`;
+      const movementFingerprint = topupData.reconciliation.matchedMovementId;
       const processedRef = db.collection('processed_bank_movements').doc(movementFingerprint);
       const processedSnap = await transaction.get(processedRef);
       if (processedSnap.exists) {
@@ -123,10 +127,10 @@ export const WalletService = {
       }
 
       const userData = userSnap.data();
-      const currentWallet = userData?.wallet || {
+      const currentWallet = (userData?.wallet as Partial<Wallet> | undefined) ?? {
         availableBalance: 0,
         retainedBalance: 0,
-        movements: []
+        movements: [] as WalletMovement[]
       };
 
       const currentBalance = Number((currentWallet.availableBalance || 0).toFixed(2));
