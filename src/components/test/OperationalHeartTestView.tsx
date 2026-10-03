@@ -104,13 +104,10 @@ export const TEST_ACTORS = {
       digitalBalance: 100.00,
       retainedBalance: 0.00,
       cashDebt: 0.00,
-      pendingSettlement: 0.00,
       accumulatedCommission: 0.00,
       dailyEarnings: 0.00,
       weeklyEarnings: 0.00,
       movements: [],
-      todaySettlements: 0,
-      nextSettlementDate: '2026-10-01T00:00:00.000Z'
     }
   },
   RECEPTOR: {
@@ -600,13 +597,10 @@ export default function OperationalHeartTestView({
               digitalBalance: 100.00,
               retainedBalance: 0.00,
               cashDebt: 0.00,
-              pendingSettlement: 0.00,
               accumulatedCommission: 0.00,
               dailyEarnings: 0.00,
               weeklyEarnings: 0.00,
               movements: [],
-              todaySettlements: 0,
-              nextSettlementDate: '2026-10-01T00:00:00.000Z'
             },
             updatedAt: new Date().toISOString()
           }, { merge: true });
@@ -918,13 +912,10 @@ export default function OperationalHeartTestView({
             digitalBalance: 100.00,
             retainedBalance: 0.00,
             cashDebt: 0.00,
-            pendingSettlement: 0.00,
             accumulatedCommission: 0.00,
             dailyEarnings: 0.00,
             weeklyEarnings: 0.00,
             movements: [],
-            todaySettlements: 0,
-            nextSettlementDate: '2026-10-01T00:00:00.000Z'
           }
         }
       });
