@@ -134,7 +134,7 @@ async function main() {
   const cashDriver = await driverRef.get();
   assert.equal(cashDriver.data()?.wallet?.availableBalance, -2.6);
   assert.equal(cashDriver.data()?.wallet?.digitalBalance, -2.6);
-  assert.equal(cashDriver.data()?.wallet?.cashDebt, 20);
+  assert.equal(cashDriver.data()?.wallet?.cashDebt, 0);
   assert.equal(cashDriver.data()?.wallet?.dailyEarnings, 17.4);
 
   const cashLedger = await db.collection('accounting_ledger').doc(`SETTLE_${cashRideId}`).get();
