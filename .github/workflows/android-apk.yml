@@ -12,7 +12,6 @@ permissions:
 jobs:
   build-android-apk:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,14 +31,14 @@ jobs:
       - name: Install project dependencies
         run: npm ci
 
+      - name: Install Capacitor Android integration
+        run: npm install --no-save @capacitor/cli@7 @capacitor/core@7 @capacitor/android@7 @capacitor/geolocation@7
+
       - name: Validate TypeScript
         run: npm run lint
 
       - name: Build web application
         run: npm run build
-
-      - name: Install Capacitor Android toolchain
-        run: npm install --no-save @capacitor/cli@7 @capacitor/core@7 @capacitor/android@7
 
       - name: Create Android project
         run: npx cap add android
