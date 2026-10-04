@@ -5,8 +5,8 @@
 // File   : DriverTrackingService.ts
 // ============================================================================
 
-import { doc, updateDoc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { Capacitor } from '@capacitor/core';
+import { Geolocation, type Position } from '@capacitor/geolocation';
 import { Location } from '../types';
 import { TrackingEngine } from './TrackingEngine';
 import { LoggingService } from './LoggingService';
@@ -25,6 +25,7 @@ export interface HardwareValidation {
 
 class DriverTrackingServiceClass {
   private activeWatchId: number | null = null;
+  private nativeWatchId: string | null = null;
   private isTrackingActive: boolean = false;
   private lastSentTime: number = 0;
   private lastLat: number = 0;
@@ -129,86 +130,66 @@ class DriverTrackingServiceClass {
       // Proceed under simulation mode for sandbox/development if specified
     }
 
-    // Watch position from Geolocation API
-    if (navigator.geolocation && locationService.getGPSMode() === GPSMode.PRODUCTION) {
+    // Watch position from the native Capacitor bridge on Android; browser GPS remains for web.
+    if (locationService.getGPSMode() === GPSMode.PRODUCTION && Capacitor.isNativePlatform()) {
+      try {
+        const permission = await Geolocation.requestPermissions();
+        const granted = permission.location === 'granted' || permission.coarseLocation === 'granted';
+        if (!granted) throw new Error('Permiso GPS denegado.');
+        this.nativeWatchId = await Geolocation.watchPosition(
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+          async (position, error) => {
+            if (!this.isTrackingActive) return;
+            if (error || !position) {
+              onValidationError?.('Señal de GPS perdida. Revise ubicación y permisos del dispositivo.');
+              return;
+            }
+            await this.processPosition(rideId, rideDetails, position, onUpdate, onValidationError);
+          }
+        );
+      } catch (error) {
+        LoggingService.error('DRIVER_TRACKING', 'No se pudo iniciar GPS nativo', error);
+        onValidationError?.('No se pudo iniciar el GPS nativo.');
+      }
+    } else if (locationService.getGPSMode() === GPSMode.PRODUCTION && navigator.geolocation) {
       this.activeWatchId = navigator.geolocation.watchPosition(
         async (position) => {
           if (!this.isTrackingActive) return;
-
-          const lat = position.coords.latitude;
-          const lng = position.coords.longitude;
-          const precision = position.coords.accuracy;
-
-          // Re-validate hardware state on change
-          const currentHw = await this.validateHardwareState();
-
-          // Optimization check: Skip transmission if movement is insignificant (< 5 meters AND < 8 seconds elapsed)
-          // EXCEPT if we have no prior position, or if GPS is degraded
-          const now = Date.now();
-          const timeElapsedMs = now - this.lastSentTime;
-          let distanceMoved = 0;
-
-          if (this.lastSentTime > 0) {
-            // Calculate distance using simple haversine
-            distanceMoved = this.computeDistance(this.lastLat, this.lastLng, lat, lng);
-          }
-
-          // Throttle coordinates upload unless:
-          // - First reading (lastSentTime === 0)
-          // - Significant movement: distance >= 5 meters
-          // - Mandatory pulse update: elapsed time >= 12 seconds to keep connection alive
-          // - Significant heading change (not easily checked without 3 points, so distance & time suffices)
-          const shouldSkip = this.lastSentTime > 0 && distanceMoved < 5.0 && timeElapsedMs < 12000;
-
-          if (shouldSkip) {
-            return; // Throttle upload
-          }
-
-          this.lastLat = lat;
-          this.lastLng = lng;
-          this.lastSentTime = now;
-
-          // Feed validated location to the Live Tracking Engine
-          const trackingRes = await TrackingEngine.processDriverLocation({
-            rideId,
-            driverId: rideDetails.driverId,
-            driverName: rideDetails.driverName,
-            passengerId: rideDetails.passengerId,
-            passengerName: rideDetails.passengerName,
-            lat,
-            lng,
-            precision,
-            batteryLevel: currentHw.batteryLevel,
-            isInternetStable: currentHw.isInternetStable,
-            originLoc: { lat: rideDetails.origin.lat, lng: rideDetails.origin.lng },
-            destinationLoc: { lat: rideDetails.destination.lat, lng: rideDetails.destination.lng }
-          });
-
-          if (trackingRes && onUpdate) {
-            onUpdate({
-              address: `Socio en Tránsito - Precisión: ${precision.toFixed(1)}m`,
-              lat,
-              lng
-            });
-          }
+          await this.processPosition(rideId, rideDetails, position as unknown as Position, onUpdate, onValidationError);
         },
-        async (error) => {
-          LoggingService.error('DRIVER_TRACKING', 'watchPosition falló, iniciando simulación resiliente para desarrollo', error);
-          if (onValidationError) {
-            onValidationError('Señal de GPS perdida. Iniciando simulación de contingencia.');
-          }
-          // Launch simulation fallback to ensure high availability in preview iframe
-          this.startSimulationTracking(rideId, rideDetails, onUpdate);
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0
-        }
+        error => onValidationError?.('Señal de GPS perdida: ' + error.message),
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       );
     } else {
       this.startSimulationTracking(rideId, rideDetails, onUpdate);
     }
+  }
+
+  private async processPosition(
+    rideId: string,
+    rideDetails: { driverId: string; driverName: string; passengerId: string; passengerName: string; origin: Location; destination: Location },
+    position: Position,
+    onUpdate?: (location: Location) => void,
+    onValidationError?: (errorMsg: string) => void
+  ): Promise<void> {
+    const lat = position.coords.latitude;
+    const lng = position.coords.longitude;
+    const precision = position.coords.accuracy;
+    const currentHw = await this.validateHardwareState();
+    if (!currentHw.canOperate) onValidationError?.(currentHw.errorMessage || 'Estado de terminal no apto.');
+    const now = Date.now();
+    const distanceMoved = this.lastSentTime > 0 ? this.computeDistance(this.lastLat, this.lastLng, lat, lng) : Infinity;
+    if (this.lastSentTime > 0 && distanceMoved < 5 && now - this.lastSentTime < 12000) return;
+    this.lastLat = lat; this.lastLng = lng; this.lastSentTime = now;
+    const trackingRes = await TrackingEngine.processDriverLocation({
+      rideId, driverId: rideDetails.driverId, driverName: rideDetails.driverName,
+      passengerId: rideDetails.passengerId, passengerName: rideDetails.passengerName,
+      lat, lng, precision, batteryLevel: currentHw.batteryLevel,
+      isInternetStable: currentHw.isInternetStable,
+      originLoc: { lat: rideDetails.origin.lat, lng: rideDetails.origin.lng },
+      destinationLoc: { lat: rideDetails.destination.lat, lng: rideDetails.destination.lng }
+    });
+    if (trackingRes && onUpdate) onUpdate({ address: 'Socio en Tránsito - Precisión: ' + precision.toFixed(1) + 'm', lat, lng });
   }
 
   /**
@@ -288,6 +269,10 @@ class DriverTrackingServiceClass {
    */
   public stopTracking(): void {
     this.isTrackingActive = false;
+    if (this.nativeWatchId !== null) {
+      void Geolocation.clearWatch({ id: this.nativeWatchId }).catch(() => undefined);
+      this.nativeWatchId = null;
+    }
     if (this.activeWatchId !== null && navigator.geolocation) {
       navigator.geolocation.clearWatch(this.activeWatchId);
       this.activeWatchId = null;
