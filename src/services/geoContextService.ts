@@ -10,6 +10,9 @@
  * de origen/destino ingresados por el usuario.
  */
 
+import { Capacitor } from '@capacitor/core';
+import { Geolocation } from '@capacitor/geolocation';
+
 export interface DetectedGeoContext {
   lat: number;
   lng: number;
@@ -66,29 +69,22 @@ export function saveLastKnownLocation(location: { lat: number; lng: number }): v
 /**
  * Solicita la posición física actual del dispositivo mediante Geolocation API
  */
-export function requestCurrentBrowserPosition(): Promise<{ lat: number; lng: number }> {
+export async function requestCurrentBrowserPosition(): Promise<{ lat: number; lng: number }> {
+  if (Capacitor.isNativePlatform()) {
+    const permission = await Geolocation.requestPermissions();
+    const granted = permission.location === 'granted' || permission.coarseLocation === 'granted';
+    if (!granted) throw new Error('Permiso de ubicación denegado.');
+    const position = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+    const coords = { lat: position.coords.latitude, lng: position.coords.longitude };
+    saveLastKnownLocation(coords);
+    return coords;
+  }
   return new Promise((resolve, reject) => {
-    if (typeof window === 'undefined' || !navigator?.geolocation) {
-      return reject(new Error('Geolocation no es soportado por este navegador.'));
-    }
-
+    if (typeof window === 'undefined' || !navigator?.geolocation) return reject(new Error('Geolocation no es soportado por este navegador.'));
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const coords = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude
-        };
-        saveLastKnownLocation(coords);
-        resolve(coords);
-      },
-      (error) => {
-        reject(error);
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 60000
-      }
+      position => { const coords = { lat: position.coords.latitude, lng: position.coords.longitude }; saveLastKnownLocation(coords); resolve(coords); },
+      error => reject(error),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
     );
   });
 }
