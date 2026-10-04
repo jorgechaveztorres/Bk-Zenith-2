@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
+import { Capacitor } from '@capacitor/core';
+import { Geolocation } from '@capacitor/geolocation';
+import { Camera as CapacitorCamera } from '@capacitor/camera';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { Compass, Bell, Camera, Image, ArrowRight, ShieldCheck, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface DriverPermissionsScreenProps {
@@ -14,53 +18,75 @@ export default function DriverPermissionsScreen({ onSuccess }: DriverPermissions
   const [error, setError] = useState<string | null>(null);
 
   const requestGPS = async () => {
-    if (!navigator.geolocation) {
-      setGpsState('denied');
-      setError('La geolocalización no es compatible con este navegador.');
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      () => {
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const permission = await Geolocation.requestPermissions();
+        const granted = permission.location === 'granted' || permission.coarseLocation === 'granted';
+        if (!granted) throw new Error('Permiso GPS denegado en el dispositivo.');
+        await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
         setGpsState('granted');
-      },
-      (err) => {
-        setGpsState('denied');
-        setError(`Error de GPS: ${err.message}. Asegúrese de habilitar los permisos en el navegador.`);
+        setError(null);
+        return;
       }
-    );
+      if (!navigator.geolocation) throw new Error('La geolocalización no es compatible.');
+      navigator.geolocation.getCurrentPosition(() => setGpsState('granted'), err => {
+        setGpsState('denied');
+        setError('Error de GPS: ' + err.message);
+      }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+    } catch (err) {
+      setGpsState('denied');
+      setError(err instanceof Error ? err.message : 'No se pudo habilitar el GPS.');
+    }
   };
 
   const requestNotifications = async () => {
-    if (!('Notification' in window)) {
-      setNotifState('granted'); // Fake granted for non-supported browsers
-      return;
-    }
     try {
+      if (Capacitor.isNativePlatform()) {
+        const permission = await LocalNotifications.requestPermissions();
+        const granted = permission.display === 'granted';
+        setNotifState(granted ? 'granted' : 'denied');
+        if (!granted) setError('Permiso de notificaciones denegado en el dispositivo.');
+        return;
+      }
+      if (!('Notification' in window)) { setNotifState('denied'); return; }
       const permission = await Notification.requestPermission();
       setNotifState(permission === 'granted' ? 'granted' : 'denied');
-    } catch {
-      setNotifState('denied');
-    }
+    } catch { setNotifState('denied'); }
   };
 
   const requestCamera = async () => {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setCameraState('granted'); // Browser iframe fallback
-      return;
-    }
     try {
+      if (Capacitor.isNativePlatform()) {
+        const permission = await CapacitorCamera.requestPermissions({ permissions: ['camera', 'photos'] });
+        const granted = permission.camera === 'granted' || permission.photos === 'granted';
+        if (!granted) throw new Error('Permiso de cámara/galería denegado en el dispositivo.');
+        setCameraState('granted');
+        setGalleryState('granted');
+        setError(null);
+        return;
+      }
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Cámara no disponible.');
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       stream.getTracks().forEach(track => track.stop());
       setCameraState('granted');
     } catch (err) {
       setCameraState('denied');
-      setError('La cámara fue rechazada o no está disponible.');
+      setError(err instanceof Error ? err.message : 'La cámara fue rechazada o no está disponible.');
     }
   };
 
-  const requestGallery = () => {
-    // Gallery permission is standard in web file dialogs, auto grant on touch/click
-    setGalleryState('granted');
+  const requestGallery = async () => {
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const permission = await CapacitorCamera.requestPermissions({ permissions: ['photos'] });
+        if (permission.photos !== 'granted' && permission.photos !== 'limited') throw new Error('Permiso de galería denegado.');
+      }
+      setGalleryState('granted');
+      setError(null);
+    } catch (err) {
+      setGalleryState('denied');
+      setError(err instanceof Error ? err.message : 'No se pudo habilitar la galería.');
+    }
   };
 
   const handleFinish = () => {
