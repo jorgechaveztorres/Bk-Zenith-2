@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-android-apk:
@@ -27,21 +27,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-
-      - name: Refresh package lock for declared runtime dependencies
-        run: npm install --package-lock-only
-
-      - name: Commit refreshed package lock
-        run: |
-          if git diff --quiet -- package-lock.json; then
-            echo "package-lock.json already synchronized"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          git commit -m "chore(ci): synchronize package lock"
-          git push origin HEAD:zenith/phase-3.3-settlement
 
       - name: Install project dependencies
         run: npm ci
