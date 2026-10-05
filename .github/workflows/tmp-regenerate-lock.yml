@@ -1,0 +1,34 @@
+name: ZENITH Temporary Lockfile Regeneration
+
+on:
+  push:
+    branches:
+      - tmp/regenerate-capacitor-lock
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp/regenerate-capacitor-lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Regenerate lockfile
+        run: npm install --package-lock-only
+      - name: Commit lockfile
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "package-lock.json already synchronized"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore: regenerate Capacitor package lock"
+          git push origin HEAD:tmp/regenerate-capacitor-lock
