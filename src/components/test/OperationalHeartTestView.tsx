@@ -533,7 +533,7 @@ export default function OperationalHeartTestView({
           });
         })
         .catch(err => {
-          alert('No se pudo acceder al GPS de tu navegador: ' + (err?.message || err));
+          alert('No se pudo acceder al GPS: ' + (err?.message || err));
         })
         .finally(() => setIsDetectingLocation(false));
       return;
