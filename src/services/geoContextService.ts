@@ -55,14 +55,16 @@ export function saveLastKnownLocation(location: { lat: number; lng: number }): v
 /** Solicita ubicación usando el plugin nativo en Android y Geolocation del navegador fuera de Capacitor. */
 export async function requestCurrentBrowserPosition(): Promise<{ lat: number; lng: number }> {
   if (Capacitor.isNativePlatform()) {
-    const current = await Geolocation.checkPermissions();
-    let permission = current;
-    const locationGranted = current.location === 'granted' || current.coarseLocation === 'granted';
-    if (!locationGranted) {
+    let permission = await Geolocation.checkPermissions();
+    const isGranted = (value: typeof permission) =>
+      value.location === 'granted' || value.coarseLocation === 'granted';
+
+    if (!isGranted(permission)) {
       permission = await Geolocation.requestPermissions();
     }
-    const granted = permission.location === 'granted' || permission.coarseLocation === 'granted';
-    if (!granted) throw new Error('Permiso de ubicación denegado. Habilita el permiso de ubicación para ZÉNITH en los ajustes de Android.');
+    if (!isGranted(permission)) {
+      throw new Error('Permiso de ubicación denegado. Habilita el permiso de ubicación para ZÉNITH en los ajustes de Android.');
+    }
 
     try {
       const position = await Geolocation.getCurrentPosition({
@@ -73,8 +75,8 @@ export async function requestCurrentBrowserPosition(): Promise<{ lat: number; ln
       const coords = { lat: position.coords.latitude, lng: position.coords.longitude };
       saveLastKnownLocation(coords);
       return coords;
-    } catch (err: any) {
-      const message = String(err?.message || err || '');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       if (message.includes('OS-PLUG-GLOC-0007') || /location services are not enabled/i.test(message)) {
         throw new Error('La ubicación está desactivada. Activa el GPS del dispositivo e inténtalo de nuevo.');
       }
