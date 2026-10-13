@@ -1,0 +1,49 @@
+name: Cloud Run Container Check
+
+on:
+  push:
+    branches:
+      - test/cloud-run-dockerfile
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'server.ts'
+      - 'server/**'
+      - 'src/**'
+      - 'vite.config.*'
+      - '.github/workflows/cloud-run-container-check.yml'
+  pull_request:
+    branches:
+      - zenith/phase-3.3-settlement
+    paths:
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'server.ts'
+      - 'server/**'
+      - 'src/**'
+      - 'vite.config.*'
+      - '.github/workflows/cloud-run-container-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  container-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build image without publishing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: zenith-backend:ci-check
