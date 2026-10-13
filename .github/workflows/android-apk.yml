@@ -4,7 +4,13 @@ on:
   push:
     branches:
       - zenith/phase-3.3-settlement
+      - test/android-gps-permissions
   workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: "HTTPS backend API URL for the test APK"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -37,23 +43,36 @@ jobs:
       - name: Validate TypeScript
         run: npm run lint
 
-      - name: Validate production API URL
+      - name: Resolve API URL
+        id: api
         env:
-          VITE_API_BASE_URL: ${{ vars.ZENITH_API_BASE_URL }}
+          INPUT_API_BASE_URL: ${{ inputs.api_base_url }}
+          ZENITH_API_BASE_URL: ${{ vars.ZENITH_API_BASE_URL }}
+          GITHUB_REF: ${{ github.ref }}
         run: |
-          test -n "$VITE_API_BASE_URL"
-          case "$VITE_API_BASE_URL" in
+          API_URL="$INPUT_API_BASE_URL"
+          if [ -z "$API_URL" ]; then API_URL="$ZENITH_API_BASE_URL"; fi
+          if [ -z "$API_URL" ] && [ "$GITHUB_REF" = "refs/heads/test/android-gps-permissions" ]; then
+            API_URL="https://zenith-preview.test"
+            echo "::warning::Using placeholder preview URL; this APK may not connect to a real backend."
+          fi
+          test -n "$API_URL"
+          case "$API_URL" in
             https://*) ;;
-            *) echo "ZENITH_API_BASE_URL must use HTTPS"; exit 1 ;;
+            *) echo "API URL must use HTTPS"; exit 1 ;;
           esac
+          echo "api_base_url=$API_URL" >> "$GITHUB_OUTPUT"
 
       - name: Build web application
         env:
-          VITE_API_BASE_URL: ${{ vars.ZENITH_API_BASE_URL }}
+          VITE_API_BASE_URL: ${{ steps.api.outputs.api_base_url }}
         run: npm run build
 
       - name: Create Android project
         run: npx cap add android
+
+      - name: Configure Android permissions and manifest
+        run: node scripts/patch-android-manifest.cjs
 
       - name: Sync web assets to Android
         run: npx cap sync android
