@@ -66,7 +66,13 @@ jobs:
       - name: Build web application
         env:
           VITE_API_BASE_URL: ${{ steps.api.outputs.api_base_url }}
-        run: npm run build
+          GOOGLE_MAPS_PLATFORM_KEY: ${{ secrets.GOOGLE_MAPS_PLATFORM_KEY }}
+        run: |
+          if [ -z "$GOOGLE_MAPS_PLATFORM_KEY" ]; then
+            echo "::error::Missing repository secret GOOGLE_MAPS_PLATFORM_KEY"
+            exit 1
+          fi
+          npm run build
 
       - name: Create Android project
         run: npx cap add android
