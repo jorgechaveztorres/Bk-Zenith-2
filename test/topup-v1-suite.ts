@@ -171,8 +171,12 @@ async function runTestSuite() {
 
     if (creditResult.txId) {
       toClean.push({ collection: 'accounting_ledger', docId: creditResult.txId });
+      toClean.push({ collection: `wallets/${testDriverId}/movements`, docId: creditResult.txId });
       const ledSnap = await db.collection('accounting_ledger').doc(creditResult.txId).get();
       console.assert(ledSnap.exists, 'FAIL: accounting_ledger debe existir');
+      const standaloneMovementSnap = await db.collection('wallets').doc(testDriverId)
+        .collection('movements').doc(creditResult.txId).get();
+      console.assert(standaloneMovementSnap.exists, 'FAIL: wallets/{driverId}/movements debe existir');
     }
 
     console.log(`  ✓ Acreditación atómica exitosa: Saldo en Firestore = S/ ${finalBalance.toFixed(2)}, Topup = CREDITED`);
@@ -312,7 +316,8 @@ async function runTestSuite() {
     console.log('\n[LIMPIEZA] Eliminando todos los documentos de prueba...');
     for (const item of toClean) {
       try {
-        await db.collection(item.collection).doc(item.docId).delete();
+        // Usar referencias de documento completas permite limpiar también subcolecciones.
+        await db.doc(`${item.collection}/${item.docId}`).delete();
       } catch (err: any) {
         console.error(`Error limpiando ${item.collection}/${item.docId}:`, err.message);
       }
