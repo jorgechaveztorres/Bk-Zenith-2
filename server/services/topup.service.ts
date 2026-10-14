@@ -35,7 +35,7 @@ export const TopupService = {
     requestedAmount: number,
     driverMeta: { name?: string; phone?: string }
   ): Promise<TopupRequest> => {
-    if (!requestedAmount || typeof requestedAmount !== 'number' || requestedAmount <= 0) {
+    if (typeof requestedAmount !== 'number' || !Number.isFinite(requestedAmount) || requestedAmount <= 0 || Math.round(requestedAmount * 100) <= 0) {
       throw new Error('MONTO_INVALIDO: El monto de recarga debe ser un número positivo mayor a S/ 0.00.');
     }
 
@@ -72,7 +72,7 @@ export const TopupService = {
       driverId,
       driverName: driverMeta.name || 'Conductor ZÉNITH',
       driverPhone: driverMeta.phone || '',
-      requestedAmount: Number(requestedAmount.toFixed(2)),
+      requestedAmount: Math.round(requestedAmount * 100) / 100,
       status: 'CREATED',
       auditHistory: [initialAudit],
       createdAt: now.toISOString(),
@@ -172,7 +172,14 @@ export const TopupService = {
       reason: 'Comprobante visual adjuntado como evidencia auxiliar para revisión humana del operador.'
     };
 
-    const cleanBase64 = receiptBase64.slice(0, 500000);
+    if (typeof receiptBase64 !== 'string' || receiptBase64.length === 0 || receiptBase64.length > 500000) {
+      throw new Error('COMPROBANTE_INVALIDO: La evidencia debe ser texto válido y no superar 500000 caracteres.');
+    }
+    if (receiptUrl && (!/^https:\/\//i.test(receiptUrl) || receiptUrl.length > 2048)) {
+      throw new Error('URL_COMPROBANTE_INVALIDA: La URL debe usar HTTPS y no superar 2048 caracteres.');
+    }
+
+    const cleanBase64 = receiptBase64;
     await topupRef.update({
       receiptBase64: cleanBase64,
       receiptUrl: receiptUrl || null,
