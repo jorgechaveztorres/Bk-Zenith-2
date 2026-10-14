@@ -24,14 +24,11 @@ router.post('/receipt', requireAuth, topupRateLimiter, topupController.submitRec
 router.get('/status/:topupId', requireAuth, topupController.getStatus);
 router.get('/my-history', requireAuth, topupController.getMyHistory);
 
-// Rutas de operación financiera: requieren rol administrativo.
-// La autorización se valida contra Custom Claims o el perfil server-side en Firestore.
-const requireFinancialOperator = [requireAuth, requireRole(['admin'])];
-
-router.get('/pending', ...requireFinancialOperator, topupController.getPending);
-router.post('/reconcile', ...requireFinancialOperator, topupController.reconcile);
-router.post('/approve-review', ...requireFinancialOperator, topupController.approveReview);
-router.post('/reject', ...requireFinancialOperator, topupController.reject);
-router.post('/credit', ...requireFinancialOperator, topupController.credit);
+// Rutas financieras: autenticación y rol administrativo explícitos en cada ruta.
+router.get('/pending', requireAuth, requireRole(['admin']), topupController.getPending);
+router.post('/reconcile', requireAuth, requireRole(['admin']), topupController.reconcile);
+router.post('/approve-review', requireAuth, requireRole(['admin']), topupController.approveReview);
+router.post('/reject', requireAuth, requireRole(['admin']), topupController.reject);
+router.post('/credit', requireAuth, requireRole(['admin']), topupController.credit);
 
 export default router;
