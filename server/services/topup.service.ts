@@ -296,7 +296,9 @@ export const TopupService = {
         currentTopup.driverId !== initialTopup.driverId ||
         currentTopup.requestedAmount !== initialTopup.requestedAmount ||
         currentTopup.referenceCode !== initialTopup.referenceCode ||
-        currentTopup.updatedAt !== initialTopup.updatedAt
+        currentTopup.updatedAt !== initialTopup.updatedAt ||
+        currentTopup.bankMovementId !== initialTopup.bankMovementId ||
+        currentTopup.reconciliation?.reconciledAt !== initialTopup.reconciliation?.reconciledAt
       ) {
         throw new Error('RECARGA_MODIFICADA: La solicitud cambió durante la conciliación; vuelva a cargarla e intente otra vez.');
       }
