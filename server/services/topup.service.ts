@@ -295,7 +295,8 @@ export const TopupService = {
       if (
         currentTopup.driverId !== initialTopup.driverId ||
         currentTopup.requestedAmount !== initialTopup.requestedAmount ||
-        currentTopup.referenceCode !== initialTopup.referenceCode
+        currentTopup.referenceCode !== initialTopup.referenceCode ||
+        currentTopup.updatedAt !== initialTopup.updatedAt
       ) {
         throw new Error('RECARGA_MODIFICADA: La solicitud cambió durante la conciliación; vuelva a cargarla e intente otra vez.');
       }
