@@ -105,7 +105,11 @@ export const WalletService = {
       }
 
       // Validar monto a acreditar
-      const verifiedAmount = Number((topupData.verifiedAmount ?? topupData.requestedAmount).toFixed(2));
+      const rawVerifiedAmount = topupData.verifiedAmount ?? topupData.requestedAmount;
+      if (typeof rawVerifiedAmount !== 'number' || !Number.isFinite(rawVerifiedAmount) || rawVerifiedAmount <= 0) {
+        throw new Error('MONTO_INVALIDO: El monto a acreditar debe ser un número finito mayor a 0.');
+      }
+      const verifiedAmount = Math.round(rawVerifiedAmount * 100) / 100;
       if (verifiedAmount <= 0) {
         throw new Error(`MONTO_INVALIDO: El monto a acreditar debe ser mayor a 0.`);
       }
@@ -133,8 +137,16 @@ export const WalletService = {
         movements: [] as WalletMovement[]
       };
 
-      const currentBalance = Number((currentWallet.availableBalance || 0).toFixed(2));
-      const newAvailableBalance = Number((currentBalance + verifiedAmount).toFixed(2));
+      const rawAvailableBalance = currentWallet.availableBalance ?? 0;
+      const rawDigitalBalance = currentWallet.digitalBalance ?? 0;
+      if (typeof rawAvailableBalance !== 'number' || !Number.isFinite(rawAvailableBalance) ||
+          typeof rawDigitalBalance !== 'number' || !Number.isFinite(rawDigitalBalance)) {
+        throw new Error('SALDO_INVALIDO: La billetera contiene saldos no numéricos o no finitos.');
+      }
+      const currentBalance = Math.round(rawAvailableBalance * 100) / 100;
+      const currentDigitalBalance = Math.round(rawDigitalBalance * 100) / 100;
+      const newAvailableBalance = Math.round((currentBalance + verifiedAmount) * 100) / 100;
+      const newDigitalBalance = Math.round((currentDigitalBalance + verifiedAmount) * 100) / 100;
 
       // 6 & 7. Registrar movimiento de Wallet
       const txId = `WTX-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -150,7 +162,7 @@ export const WalletService = {
       const updatedWallet = {
         ...currentWallet,
         availableBalance: newAvailableBalance,
-        digitalBalance: newAvailableBalance,
+        digitalBalance: newDigitalBalance,
         updatedAt: FieldValue.serverTimestamp(),
         movements: [newMov, ...(currentWallet.movements || []).slice(0, 49)]
       };
