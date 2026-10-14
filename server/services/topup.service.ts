@@ -300,48 +300,48 @@ export const TopupService = {
     if (!db) throw new Error('FIRESTORE_UNAVAILABLE: Base de datos no disponible.');
 
     const topupRef = db.collection('topup_requests').doc(topupId);
-    const snap = await topupRef.get();
-    if (!snap.exists) throw new Error('RECARGA_NO_ENCONTRADA: Recarga no encontrada en Firestore.');
-
-    const topup = snap.data() as TopupRequest;
-
-    if (topup.status !== 'REVIEW') {
-      throw new Error(`ESTADO_INVALIDO: Solo se pueden aprobar solicitudes en estado REVIEW. Estado actual: ${topup.status}`);
-    }
-
-    // La aprobación manual no puede crear una conciliación desde cero.
-    // Debe existir una conciliación REVIEW trazable al movimiento confirmado.
-    if (
-      topup.reconciliation?.status !== 'REVIEW' ||
-      !topup.reconciliation.matchedMovementId ||
-      topup.bankMovementId !== topup.reconciliation.matchedMovementId
-    ) {
-      throw new Error('CONCILIACION_NO_VERIFICABLE: El caso REVIEW no tiene una conciliación trazable a un movimiento confirmado.');
-    }
-
-    const movementRef = db.collection('bank_movements').doc(topup.reconciliation.matchedMovementId);
-    const movementSnap = await movementRef.get();
-    if (!movementSnap.exists || movementSnap.data()?.matchedTopupId !== topupId) {
-      throw new Error('MOVIMIENTO_NO_VERIFICADO: No existe un movimiento bancario confirmado y vinculado a esta recarga.');
-    }
-
     const nowIso = new Date().toISOString();
-    const approvedAudit: TopupAuditEntry = {
-      fromStatus: 'REVIEW',
-      toStatus: 'VERIFIED',
-      timestamp: nowIso,
-      actorId: operatorId,
-      actorRole: 'operator',
-      reason: `Aprobación manual autorizada tras revisión: ${operatorNotes}`,
-      metadata: { operatorNotes }
-    };
 
-    await topupRef.update({
-      status: 'VERIFIED',
-      updatedAt: nowIso,
-      'reconciliation.status': 'VERIFIED',
-      'reconciliation.notes': `Aprobado manualmente por operador ${operatorId}: ${operatorNotes}`,
-      auditHistory: FieldValue.arrayUnion(approvedAudit)
+    await db.runTransaction(async (transaction) => {
+      const snap = await transaction.get(topupRef);
+      if (!snap.exists) throw new Error('RECARGA_NO_ENCONTRADA: Recarga no encontrada en Firestore.');
+
+      const topup = snap.data() as TopupRequest;
+      if (topup.status !== 'REVIEW') {
+        throw new Error(`ESTADO_INVALIDO: Solo se pueden aprobar solicitudes en estado REVIEW. Estado actual: ${topup.status}`);
+      }
+
+      if (
+        topup.reconciliation?.status !== 'REVIEW' ||
+        !topup.reconciliation.matchedMovementId ||
+        topup.bankMovementId !== topup.reconciliation.matchedMovementId
+      ) {
+        throw new Error('CONCILIACION_NO_VERIFICABLE: El caso REVIEW no tiene una conciliación trazable a un movimiento confirmado.');
+      }
+
+      const movementRef = db!.collection('bank_movements').doc(topup.reconciliation.matchedMovementId);
+      const movementSnap = await transaction.get(movementRef);
+      if (!movementSnap.exists || movementSnap.data()?.matchedTopupId !== topupId) {
+        throw new Error('MOVIMIENTO_NO_VERIFICADO: No existe un movimiento bancario confirmado y vinculado a esta recarga.');
+      }
+
+      const approvedAudit: TopupAuditEntry = {
+        fromStatus: 'REVIEW',
+        toStatus: 'VERIFIED',
+        timestamp: nowIso,
+        actorId: operatorId,
+        actorRole: 'operator',
+        reason: `Aprobación manual autorizada tras revisión: ${operatorNotes}`,
+        metadata: { operatorNotes }
+      };
+
+      transaction.update(topupRef, {
+        status: 'VERIFIED',
+        updatedAt: nowIso,
+        'reconciliation.status': 'VERIFIED',
+        'reconciliation.notes': `Aprobado manualmente por operador ${operatorId}: ${operatorNotes}`,
+        auditHistory: FieldValue.arrayUnion(approvedAudit)
+      });
     });
 
     const updatedSnap = await topupRef.get();
@@ -349,7 +349,8 @@ export const TopupService = {
   },
 
   /**
-   * RECHAZO EXPLÍCITO POR EL OPERADOR
+   * RECHAZO EXPLÍCITO POR EL OPERADOR.
+   * La transición se ejecuta en transacción para evitar carreras con la acreditación.
    */
   rejectTopup: async (
     topupId: string,
@@ -359,30 +360,39 @@ export const TopupService = {
     if (!db) throw new Error('FIRESTORE_UNAVAILABLE: Base de datos no disponible.');
 
     const topupRef = db.collection('topup_requests').doc(topupId);
-    const snap = await topupRef.get();
-    if (!snap.exists) throw new Error('RECARGA_NO_ENCONTRADA: Recarga no encontrada en Firestore.');
-
-    const topup = snap.data() as TopupRequest;
-    if (topup.status === 'CREDITED') {
-      throw new Error('IDEMPOTENCIA: No se puede rechazar una recarga ya acreditada.');
-    }
-
     const nowIso = new Date().toISOString();
-    const rejectAudit: TopupAuditEntry = {
-      fromStatus: topup.status,
-      toStatus: 'REJECTED',
-      timestamp: nowIso,
-      actorId: operatorId,
-      actorRole: 'operator',
-      reason: `Rechazado por operador: ${reason}`
-    };
 
-    await topupRef.update({
-      status: 'REJECTED',
-      updatedAt: nowIso,
-      'reconciliation.status': 'REJECTED',
-      'reconciliation.notes': reason,
-      auditHistory: FieldValue.arrayUnion(rejectAudit)
+    await db.runTransaction(async (transaction) => {
+      const snap = await transaction.get(topupRef);
+      if (!snap.exists) throw new Error('RECARGA_NO_ENCONTRADA: Recarga no encontrada en Firestore.');
+
+      const topup = snap.data() as TopupRequest;
+      if (topup.status === 'CREDITED') {
+        throw new Error('IDEMPOTENCIA: No se puede rechazar una recarga ya acreditada.');
+      }
+      if (topup.status === 'VERIFIED') {
+        throw new Error('ESTADO_INMUTABLE: Una recarga VERIFIED debe acreditarse o resolverse mediante un procedimiento financiero auditado; no puede rechazarse directamente.');
+      }
+      if (topup.status === 'REJECTED') {
+        throw new Error('ESTADO_TERMINAL: La solicitud ya está rechazada.');
+      }
+
+      const rejectAudit: TopupAuditEntry = {
+        fromStatus: topup.status,
+        toStatus: 'REJECTED',
+        timestamp: nowIso,
+        actorId: operatorId,
+        actorRole: 'operator',
+        reason: `Rechazado por operador: ${reason}`
+      };
+
+      transaction.update(topupRef, {
+        status: 'REJECTED',
+        updatedAt: nowIso,
+        'reconciliation.status': 'REJECTED',
+        'reconciliation.notes': reason,
+        auditHistory: FieldValue.arrayUnion(rejectAudit)
+      });
     });
 
     const updatedSnap = await topupRef.get();
