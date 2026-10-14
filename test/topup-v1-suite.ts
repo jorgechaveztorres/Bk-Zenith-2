@@ -1,14 +1,11 @@
 // ============================================================================
 // ZÉNITH — SUITE DE PRUEBAS: TOPUP V1 CON VALIDACIÓN HUMANA
-// Valida los 10 puntos del flujo simplificado en Firestore Real
+// Valida los 9 puntos activos del flujo simplificado en Firestore Real
 // ============================================================================
 
 import { db } from '../server/config/firebase';
 import { TopupService } from '../server/services/topup.service';
-import { ReconciliationService } from '../server/services/reconciliation.service';
-import { WalletService as ServerWalletService } from '../server/services/wallet.service';
-import { topupController } from '../server/controllers/topup.controller';
-import { TopupRequest } from '../src/types';
+import { WalletService } from '../server/services/wallet.service';
 
 async function runTestSuite() {
   console.log('================================================================');
@@ -235,16 +232,134 @@ async function runTestSuite() {
     passedTests++;
 
     // ==========================================================================
-    // 10. SEGURIDAD DE ACCESO Y RECHAZO DE MODIFICACIÓN ARBITRARIA
+    // 10. PRUEBA DE BLOQUEO DE ACREDITACIÓN SIN CONCILIACIÓN VERIFICADA
     // ==========================================================================
-    console.log('\n[PRUEBA 10] Bloqueo de depósito arbitrario desde cliente...');
+    console.log('\\n[PRUEBA 10] Bloqueo de acreditación sin conciliación VERIFIED trazable...');
+    const forgedTopup = await TopupService.createTopupRequest(testDriverId, 15.00, {
+      name: 'Conductor Suite Humana'
+    });
+    toClean.push({ collection: 'topup_requests', docId: forgedTopup.id });
+
+    await db.collection('topup_requests').doc(forgedTopup.id).update({
+      status: 'VERIFIED',
+      verifiedAmount: 15.00
+    });
+
     try {
-      await ServerWalletService.depositFunds(testDriverId, 9999, 'HACK');
-      console.error('FAIL: No debió permitir depósito arbitrario');
+      await TopupService.creditTopup(forgedTopup.id, operatorId);
+      console.error('FAIL: Debió bloquearse la acreditación sin conciliación trazable');
       process.exit(1);
-    } catch (e: any) {
-      console.assert(e.message.includes('DEPRECATED'), 'FAIL: Error esperado');
-      console.log(`  ✓ Depósito arbitrario bloqueado: "${e.message}"`);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.assert(message.includes('CONCILIACION_NO_VERIFICADA'), 'FAIL: Mensaje inesperado');
+      console.log(`  ✓ Acreditación fraudulenta bloqueada: "${message}"`);
+      passedTests++;
+    }
+
+    // ==========================================================================
+    // 11. PRUEBA DE BLOQUEO DE REUTILIZACIÓN DE MOVIMIENTO
+    // ==========================================================================
+    console.log('\\n[PRUEBA 11] Bloqueo de reutilización de movimiento bancario...');
+    const duplicateTopup = await TopupService.createTopupRequest(testDriverId, 30.00, {
+      name: 'Conductor Suite Humana'
+    });
+    toClean.push({ collection: 'topup_requests', docId: duplicateTopup.id });
+
+    try {
+      await TopupService.reconcileTopup(duplicateTopup.id, bankMovementExact, operatorId);
+      console.error('FAIL: Debió bloquearse la reutilización del movimiento bancario');
+      process.exit(1);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.assert(message.includes('MOVIMIENTO_YA_ASIGNADO'), 'FAIL: Mensaje inesperado');
+      console.log(`  ✓ Reutilización de movimiento bloqueada: "${message}"`);
+      passedTests++;
+    }
+
+    // ==========================================================================
+    // 12. NO PERMITIR RECONCILIAR NUEVAMENTE UNA RECARGA VERIFIED
+    // ==========================================================================
+    console.log('\\n[PRUEBA 12] Inmutabilidad del estado VERIFIED...');
+    const verifiedTopup = await TopupService.createTopupRequest(testDriverId, 31.00, {
+      name: 'Conductor Suite Humana'
+    });
+    toClean.push({ collection: 'topup_requests', docId: verifiedTopup.id });
+
+    await db.collection('topup_requests').doc(verifiedTopup.id).update({
+      status: 'VERIFIED',
+      reconciliation: {
+        status: 'VERIFIED',
+        matchedMovementId: 'MOV-TEST-VERIFIED',
+        verifiedAmount: 31.00
+      },
+      bankMovementId: 'MOV-TEST-VERIFIED'
+    });
+
+    try {
+      await TopupService.reconcileTopup(verifiedTopup.id, bankMovementExact, operatorId);
+      console.error('FAIL: Debió bloquear la sobrescritura de una conciliación VERIFIED');
+      process.exit(1);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.assert(message.includes('ESTADO_INMUTABLE'), 'FAIL: Mensaje inesperado');
+      console.log(`  ✓ VERIFIED protegido contra nueva conciliación: "${message}"`);
+      passedTests++;
+    }
+
+    // ==========================================================================
+    // 13. NO PERMITIR ENVIAR COMPROBANTE SOBRE UNA RECARGA VERIFIED
+    // ==========================================================================
+    console.log('\n[PRUEBA 13] Protección de VERIFIED contra degradación con comprobante...');
+    const receiptBlockedTopup = await TopupService.createTopupRequest(testDriverId, 40.00, {
+      name: 'Conductor Suite Humana'
+    });
+    toClean.push({ collection: 'topup_requests', docId: receiptBlockedTopup.id });
+
+    await db.collection('topup_requests').doc(receiptBlockedTopup.id).update({
+      status: 'VERIFIED',
+      reconciliation: {
+        status: 'VERIFIED',
+        matchedMovementId: 'MOV-TEST-NO-DEGRADE',
+        verifiedAmount: 40.00
+      }
+    });
+
+    try {
+      await TopupService.submitReceiptAndAnalyze(receiptBlockedTopup.id, testDriverId, dummyBase64);
+      console.error('FAIL: Debió bloquear el envío de comprobante en estado VERIFIED');
+      process.exit(1);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.assert(message.includes('ESTADO_INMUTABLE'), 'FAIL: Mensaje inesperado');
+      console.log(`  ✓ Degradación de VERIFIED bloqueada exitosamente: "${message}"`);
+      const snapVerified = await db.collection('topup_requests').doc(receiptBlockedTopup.id).get();
+      console.assert(snapVerified.data()?.status === 'VERIFIED', 'FAIL: Estado debió permanecer en VERIFIED');
+      passedTests++;
+    }
+
+    // ==========================================================================
+    // 14. BLOQUEO DE RETIRO CON MONTO NEGATIVO O CERO
+    // ==========================================================================
+    console.log('\n[PRUEBA 14] Validación estricta de monto positivo en withdrawFunds...');
+    try {
+      await WalletService.withdrawFunds(testDriverId, -50.00, 'BCP 191-12345678-0-12');
+      console.error('FAIL: Debió rechazar monto negativo');
+      process.exit(1);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.assert(message.includes('MONTO_INVALIDO'), 'FAIL: Mensaje inesperado');
+      console.log(`  ✓ Retiro negativo bloqueado: "${message}"`);
+      passedTests++;
+    }
+
+    try {
+      await WalletService.withdrawFunds(testDriverId, 0, 'BCP 191-12345678-0-12');
+      console.error('FAIL: Debió rechazar monto cero');
+      process.exit(1);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.assert(message.includes('MONTO_INVALIDO'), 'FAIL: Mensaje inesperado');
+      console.log(`  ✓ Retiro con monto cero bloqueado: "${message}"`);
       passedTests++;
     }
 

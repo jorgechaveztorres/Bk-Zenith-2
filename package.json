@@ -19,9 +19,18 @@
     "emulators": "firebase emulators:start --project gen-lang-client-0838883154 --only auth,firestore,storage",
     "emulators:export": "firebase emulators:export ./test/emulator-data",
     "test:sandbox": "firebase emulators:exec --project gen-lang-client-0838883154 --only auth,firestore,storage \"npx tsx scripts/virtual-sandbox-runner.ts\"",
-    "test:concurrency": "firebase emulators:exec --project gen-lang-client-0838883154 --only auth,firestore,storage \"FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9199 npx tsx scripts/concurrency-sandbox-runner.ts\""
+    "test:concurrency": "firebase emulators:exec --project gen-lang-client-0838883154 --only auth,firestore,storage \"FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9199 npx tsx scripts/concurrency-sandbox-runner.ts\"",
+    "test:settlement": "npx firebase-tools@15.32.1 emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx scripts/test-ride-settlement.ts\"",
+    "test:financial-reconciliation": "npx firebase-tools@15.32.1 emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx scripts/test-financial-reconciliation.ts\"",
+    "test:topup": "npx firebase-tools@15.32.1 emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx test/topup-v1-suite.ts\""
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/camera": "^8.2.5",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/geolocation": "^8.2.3",
+    "@capacitor/haptics": "^8.0.2",
     "@google/genai": "^1.29.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vis.gl/react-google-maps": "^1.8.3",
@@ -40,6 +49,7 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.2",
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",

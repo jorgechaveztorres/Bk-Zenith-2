@@ -337,18 +337,54 @@ export default function DriverFlow({ user }: DriverFlowProps) {
         {/* Node Directions Card */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="hud-card p-6 flex flex-col justify-center gap-2 bg-black/40">
-            <div className="flex items-center gap-2 text-[#39FF14]">
-               <MapPin size={16} />
-               <p className="text-[10px] font-mono uppercase font-bold tracking-widest">Nodo de Origen</p>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-[#39FF14]">
+                 <MapPin size={16} />
+                 <p className="text-[10px] font-mono uppercase font-bold tracking-widest">
+                   {myAcceptedRide.orderType === 'DELIVERY' ? 'Punto de Recojo (Paquete)' : 'Nodo de Origen'}
+                 </p>
+              </div>
+              {myAcceptedRide.orderType === 'DELIVERY' && (
+                <span className="text-[9px] font-mono font-black text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/30">
+                  📦 RECOJO
+                </span>
+              )}
             </div>
             <p className="text-lg font-bold uppercase italic leading-tight text-white text-left">{myAcceptedRide.origin.address}</p>
+            {myAcceptedRide.packageInfo?.description && (
+              <p className="text-xs text-amber-300 font-mono text-left bg-amber-500/10 p-2 rounded-lg border border-amber-500/20">
+                📦 Paquete: <strong>{myAcceptedRide.packageInfo.description}</strong>
+              </p>
+            )}
           </div>
           <div className="hud-card p-6 flex flex-col justify-center gap-2 border-l-[#39FF14]/30 border-l-2 bg-black/40">
-            <div className="flex items-center gap-2 text-white/50">
-               <Compass size={16} />
-               <p className="text-[10px] font-mono uppercase font-bold tracking-widest">Objetivo de Destino</p>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-white/50">
+                 <Compass size={16} />
+                 <p className="text-[10px] font-mono uppercase font-bold tracking-widest">
+                   {myAcceptedRide.orderType === 'DELIVERY' ? 'Punto de Entrega' : 'Objetivo de Destino'}
+                 </p>
+              </div>
+              {myAcceptedRide.orderType === 'DELIVERY' && (
+                <span className="text-[9px] font-mono font-black text-[#39FF14] bg-[#39FF14]/10 px-2 py-0.5 rounded border border-[#39FF14]/30">
+                  🎯 ENTREGA
+                </span>
+              )}
             </div>
             <p className="text-lg font-bold uppercase italic leading-tight text-white text-left">{myAcceptedRide.destination.address}</p>
+            {myAcceptedRide.receptor && (
+              <div className="flex items-center justify-between text-xs text-gray-300 font-mono text-left bg-white/5 p-2 rounded-lg">
+                <span>Recibe: <strong>{myAcceptedRide.receptor.name || 'Contacto'}</strong></span>
+                {myAcceptedRide.receptor.phone && (
+                  <a
+                    href={`tel:${myAcceptedRide.receptor.phone}`}
+                    className="px-2 py-1 bg-[#39FF14] text-black font-black rounded text-[10px] uppercase"
+                  >
+                    Llamar
+                  </a>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -361,7 +397,7 @@ export default function DriverFlow({ user }: DriverFlowProps) {
               className="w-full bg-[#39FF14] text-black font-black uppercase italic tracking-tighter text-xl py-6 rounded-2xl flex items-center justify-center gap-3 hover:scale-[1.01] active:scale-[0.99] transition-all shadow-glow disabled:opacity-50 cursor-pointer"
             >
               <Navigation className="animate-bounce" size={24} />
-              Conductor en Camino
+              {myAcceptedRide.orderType === 'DELIVERY' ? 'En Camino al Punto de Recojo' : 'Conductor en Camino'}
             </button>
           ) : myAcceptedRide.status === RideStatus.DRIVER_ARRIVING ? (
             <button
@@ -370,7 +406,7 @@ export default function DriverFlow({ user }: DriverFlowProps) {
               className="w-full bg-[#39FF14] text-black font-black uppercase italic tracking-tighter text-xl py-6 rounded-2xl flex items-center justify-center gap-3 hover:scale-[1.01] active:scale-[0.99] transition-all shadow-glow disabled:opacity-50 cursor-pointer"
             >
               <MapPin className="animate-pulse" size={24} />
-              Registrar Llegada (Llegué)
+              {myAcceptedRide.orderType === 'DELIVERY' ? 'Llegué / Recoger Paquete' : 'Registrar Llegada (Llegué)'}
             </button>
           ) : myAcceptedRide.status === RideStatus.WAITING_FOR_OTP ? (
             <div className="bg-neutral-900 border border-white/5 rounded-3xl p-6 space-y-4 text-left">

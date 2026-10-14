@@ -7,7 +7,7 @@
 
 import { db } from '../config/firebase';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-// import { Wallet, WalletMovement } from '../types'; 
+import { TopupRequest, Wallet, WalletMovement } from '../../src/types'; 
 
 export const WalletService = {
   // Initialize wallet V2 for any user (passenger or driver)
@@ -25,11 +25,8 @@ export const WalletService = {
           retainedBalance: loadedWallet.retainedBalance !== undefined ? loadedWallet.retainedBalance : 0.00,
           dailyEarnings: loadedWallet.dailyEarnings !== undefined ? loadedWallet.dailyEarnings : 0.00,
           weeklyEarnings: loadedWallet.weeklyEarnings !== undefined ? loadedWallet.weeklyEarnings : 0.00,
-          pendingSettlement: loadedWallet.pendingSettlement !== undefined ? loadedWallet.pendingSettlement : 0.00,
           digitalBalance: loadedWallet.digitalBalance !== undefined ? loadedWallet.digitalBalance : 0.00,
           cashDebt: loadedWallet.cashDebt !== undefined ? loadedWallet.cashDebt : 0.00,
-          todaySettlements: loadedWallet.todaySettlements !== undefined ? loadedWallet.todaySettlements : 0,
-          nextSettlementDate: loadedWallet.nextSettlementDate || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
           movements: loadedWallet.movements || [],
           
           // Wallet V2 extensions
@@ -51,122 +48,32 @@ export const WalletService = {
       }
     }
     
-    // Default initial wallet with default starting credit (S/. 120 + S/. 25 promo)
     const defaultWallet = {
-      availableBalance: 120.00,
+      availableBalance: 0.00,
       retainedBalance: 0.00,
       dailyEarnings: 0.00,
       weeklyEarnings: 0.00,
       pendingSettlement: 0.00,
-      digitalBalance: 120.00,
+      digitalBalance: 0.00,
       cashDebt: 0.00,
       todaySettlements: 0,
       nextSettlementDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      
-      // Wallet V2 extensions
       pendingBalance: 0.00,
-      promotionalBalance: 25.00,
+      promotionalBalance: 0.00,
       compensationBalance: 0.00,
       accumulatedCommission: 0.00,
       monthlyEarnings: 0.00,
-      dailyBalanceHist: { Lunes: 120, Martes: 120, Miercoles: 120, Jueves: 120, Viernes: 120, Sabado: 120, Domingo: 120 },
-      weeklyBalanceHist: { 'Semana 1': 120, 'Semana 2': 120, 'Semana 3': 120, 'Semana 4': 120 },
-      monthlyBalanceHist: { Enero: 120, Febrero: 120, Marzo: 120, Abril: 120, Mayo: 120, Junio: 120 },
-      
-      movements: [
-        {
-          id: `mov_init_${Date.now()}`,
-          type: 'deposit',
-          amount: 120.00,
-          description: 'Bono táctico de bienvenida a la red Zénith',
-          createdAt: Timestamp.now()
-        }
-      ]
+      dailyBalanceHist: {},
+      weeklyBalanceHist: {},
+      monthlyBalanceHist: {},
+      movements: []
     };
-    
+
     await userDocRef.update({
       wallet: defaultWallet
     });
     
     return defaultWallet;
-  },
-
-  // Credit ride earnings to driver's wallet with exact commissions and daily/weekly/monthly statistics logging
-  creditRideEarnings: async (driverId: string, amount: number, rideId: string, passengerName: string) => {
-    if (!db) throw new Error("Base de datos no disponible.");
-    try {
-      const userDocRef = db.collection('users').doc(driverId);
-      const snap = await userDocRef.get();
-      if (!snap.exists) return;
-
-      const userData = snap.data();
-      let currentWallet = userData?.wallet;
-
-      if (!currentWallet) {
-        currentWallet = await WalletService.getOrCreateWallet(driverId);
-      }
-
-      const commission = Number((amount * 0.15).toFixed(2)); // 15% platform commission
-      const netEarning = Number((amount - commission).toFixed(2));
-
-      const rideEarningMovement = {
-        id: `mov_earning_${Date.now()}_1`,
-        type: 'ride_earning',
-        amount: amount,
-        description: `Ganancia viaje #${rideId.substring(0, 6)} - Cliente: ${passengerName}`,
-        createdAt: Timestamp.now()
-      };
-
-      const feeMovement = {
-        id: `mov_fee_${Date.now()}_2`,
-        type: 'fee',
-        amount: commission,
-        description: `Comisión de Red Táctica Zénith (15%) - Viaje #${rideId.substring(0, 6)}`,
-        createdAt: Timestamp.now()
-      };
-
-      // Update historical data
-      const dailyHist = { ...(currentWallet.dailyBalanceHist || {}) };
-      const currentDay = new Date().toLocaleDateString('es-ES', { weekday: 'long' });
-      const capitalizedDay = currentDay.charAt(0).toUpperCase() + currentDay.slice(1);
-      const prevDayVal = dailyHist[capitalizedDay] || 0;
-      dailyHist[capitalizedDay] = Number((prevDayVal + netEarning).toFixed(2));
-
-      const updatedWallet = {
-        availableBalance: Number((currentWallet.availableBalance + netEarning).toFixed(2)),
-        retainedBalance: currentWallet.retainedBalance,
-        dailyEarnings: Number((currentWallet.dailyEarnings + netEarning).toFixed(2)),
-        weeklyEarnings: Number((currentWallet.weeklyEarnings + netEarning).toFixed(2)),
-        pendingSettlement: currentWallet.pendingSettlement !== undefined ? currentWallet.pendingSettlement : 0.00,
-        digitalBalance: currentWallet.digitalBalance !== undefined ? Number((currentWallet.digitalBalance + netEarning).toFixed(2)) : Number((currentWallet.availableBalance + netEarning).toFixed(2)),
-        cashDebt: currentWallet.cashDebt !== undefined ? currentWallet.cashDebt : 0.00,
-        todaySettlements: currentWallet.todaySettlements !== undefined ? currentWallet.todaySettlements : 0,
-        nextSettlementDate: currentWallet.nextSettlementDate || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        
-        // Wallet V2 properties
-        pendingBalance: currentWallet.pendingBalance || 0.00,
-        promotionalBalance: currentWallet.promotionalBalance || 0.00,
-        compensationBalance: currentWallet.compensationBalance || 0.00,
-        accumulatedCommission: Number(((currentWallet.accumulatedCommission || 0) + commission).toFixed(2)),
-        monthlyEarnings: Number(((currentWallet.monthlyEarnings || 0) + netEarning).toFixed(2)),
-        dailyBalanceHist: dailyHist,
-        weeklyBalanceHist: currentWallet.weeklyBalanceHist,
-        monthlyBalanceHist: currentWallet.monthlyBalanceHist,
-        movements: [rideEarningMovement, feeMovement, ...(currentWallet.movements || [])]
-      };
-
-      await userDocRef.update({
-        wallet: updatedWallet
-      });
-
-    } catch (error) {
-      console.error("[ZENITH-WALLET-ERROR] Error crediting ride earnings:", error);
-    }
-  },
-
-  // Record Deposit - DEPRECADO PERMANENTEMENTE POR SEGURIDAD
-  depositFunds: async (_userId: string, _amount: number, _method: string) => {
-    throw new Error("DEPRECATED: El depósito arbitrario ha sido deshabilitado permanentemente. Utilice el flujo de recargas verificadas /api/topups.");
   },
 
   // Acreditación Atómica de Recarga Verificada (V1 - Yape Personal)
@@ -181,15 +88,19 @@ export const WalletService = {
         throw new Error(`RECARGA_NO_ENCONTRADA: La solicitud ${topupId} no existe.`);
       }
 
-      const topupData = topupSnap.data() as any;
+      const topupData = topupSnap.data() as TopupRequest;
 
       // 2. Confirmar status === VERIFIED
       if (topupData.status !== 'VERIFIED') {
         throw new Error(`ESTADO_INVALIDO: Solo se pueden acreditar recargas en estado VERIFIED. Estado actual: ${topupData.status}`);
       }
 
-      // 3. Confirmar que no esté CREDITED
-      if (topupData.status === 'CREDITED' || topupData.creditedAt) {
+      // 3. La acreditación solo procede desde una conciliación VERIFIED con movimiento trazable.
+      if (topupData.status !== 'VERIFIED' || topupData.reconciliation?.status !== 'VERIFIED' || !topupData.reconciliation.matchedMovementId) {
+        throw new Error('CONCILIACION_NO_VERIFICADA: La recarga no tiene una conciliación VERIFIED y trazable.');
+      }
+
+      if (topupData.creditedAt) {
         throw new Error(`IDEMPOTENCIA: La recarga ${topupId} ya fue acreditada previamente.`);
       }
 
@@ -200,7 +111,7 @@ export const WalletService = {
       }
 
       // 4. Confirmar que el movimiento no haya sido utilizado anteriormente
-      const movementFingerprint = topupData.reconciliation?.matchedMovementId || `FPR-${topupData.id}`;
+      const movementFingerprint = topupData.reconciliation.matchedMovementId;
       const processedRef = db.collection('processed_bank_movements').doc(movementFingerprint);
       const processedSnap = await transaction.get(processedRef);
       if (processedSnap.exists) {
@@ -216,10 +127,10 @@ export const WalletService = {
       }
 
       const userData = userSnap.data();
-      const currentWallet = userData?.wallet || {
+      const currentWallet = (userData?.wallet as Partial<Wallet> | undefined) ?? {
         availableBalance: 0,
         retainedBalance: 0,
-        movements: []
+        movements: [] as WalletMovement[]
       };
 
       const currentBalance = Number((currentWallet.availableBalance || 0).toFixed(2));
@@ -322,9 +233,12 @@ export const WalletService = {
     });
   },
 
-  // Record Withdrawal
+  // Record Withdrawal con validación estricta de monto positivo
   withdrawFunds: async (userId: string, amount: number, bankDetails: string) => {
     if (!db) throw new Error("Base de datos no disponible.");
+    if (typeof amount !== 'number' || isNaN(amount) || !isFinite(amount) || amount <= 0) {
+      throw new Error("MONTO_INVALIDO: El monto de retiro debe ser un número positivo mayor a S/ 0.00.");
+    }
     const userDocRef = db.collection('users').doc(userId);
     const snap = await userDocRef.get();
     if (!snap.exists) throw new Error("User profile not found");

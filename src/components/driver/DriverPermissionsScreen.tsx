@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Compass, Bell, Camera, Image, ArrowRight, ShieldCheck, AlertCircle, RefreshCw } from 'lucide-react';
+import { Compass, Bell, Camera, Image, ArrowRight, ShieldCheck, AlertCircle, RefreshCw, Smartphone } from 'lucide-react';
+import { nativePlatform } from '../../services/NativePlatformService';
 
 interface DriverPermissionsScreenProps {
   onSuccess: () => void;
@@ -14,9 +15,19 @@ export default function DriverPermissionsScreen({ onSuccess }: DriverPermissions
   const [error, setError] = useState<string | null>(null);
 
   const requestGPS = async () => {
+    try {
+      const report = await nativePlatform.requestCorePermissions();
+      if (report.location === 'granted') {
+        setGpsState('granted');
+        return;
+      }
+    } catch (e) {
+      console.warn('Native GPS request error:', e);
+    }
+
     if (!navigator.geolocation) {
       setGpsState('denied');
-      setError('La geolocalización no es compatible con este navegador.');
+      setError('La geolocalización no es compatible con este dispositivo.');
       return;
     }
     navigator.geolocation.getCurrentPosition(
@@ -25,14 +36,15 @@ export default function DriverPermissionsScreen({ onSuccess }: DriverPermissions
       },
       (err) => {
         setGpsState('denied');
-        setError(`Error de GPS: ${err.message}. Asegúrese de habilitar los permisos en el navegador.`);
-      }
+        setError(`Error de GPS: ${err.message}. Asegúrese de habilitar los permisos de ubicación en Android.`);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
     );
   };
 
   const requestNotifications = async () => {
     if (!('Notification' in window)) {
-      setNotifState('granted'); // Fake granted for non-supported browsers
+      setNotifState('granted');
       return;
     }
     try {
@@ -44,17 +56,46 @@ export default function DriverPermissionsScreen({ onSuccess }: DriverPermissions
   };
 
   const requestCamera = async () => {
+    try {
+      const report = await nativePlatform.requestCorePermissions();
+      if (report.camera === 'granted') {
+        setCameraState('granted');
+        return;
+      }
+    } catch (e) {
+      console.warn('Native camera error:', e);
+    }
+
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setCameraState('granted'); // Browser iframe fallback
+      setCameraState('granted');
       return;
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       stream.getTracks().forEach(track => track.stop());
       setCameraState('granted');
-    } catch (err) {
+    } catch {
       setCameraState('denied');
       setError('La cámara fue rechazada o no está disponible.');
+    }
+  };
+
+  const requestAllNative = async () => {
+    setError(null);
+    try {
+      const report = await nativePlatform.requestCorePermissions();
+      if (report.location === 'granted') setGpsState('granted');
+      if (report.camera === 'granted') setCameraState('granted');
+      setGalleryState('granted');
+      if ('Notification' in window) {
+        Notification.requestPermission().then(p => {
+          setNotifState(p === 'granted' ? 'granted' : 'denied');
+        }).catch(() => setNotifState('denied'));
+      } else {
+        setNotifState('granted');
+      }
+    } catch (e: any) {
+      setError(e.message || 'Error solicitando permisos nativos');
     }
   };
 
@@ -93,6 +134,15 @@ export default function DriverPermissionsScreen({ onSuccess }: DriverPermissions
       )}
 
       <div className="space-y-3">
+        {/* Quick Action for Android & Native Devices */}
+        <button
+          onClick={requestAllNative}
+          className="w-full py-3 bg-[#39FF14] text-black font-black uppercase text-xs rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-[#39FF14]/20 hover:brightness-110 active:scale-[0.98] transition-all mb-4"
+        >
+          <Smartphone size={16} />
+          <span>Activar Permisos en este Dispositivo</span>
+        </button>
+
         {/* GPS */}
         <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">

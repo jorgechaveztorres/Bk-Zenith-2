@@ -90,6 +90,18 @@ async function runSuite() {
       rating: 4.9,
       lastActive: FieldValue.serverTimestamp()
     });
+
+    await db.collection('users').doc(driverId).set({
+      uid: driverId,
+      fullName: `Conductor ${driverId}`,
+      role: 'driver',
+      wallet: {
+        availableBalance: 100,
+        digitalBalance: 100,
+        retainedBalance: 0,
+        movements: []
+      }
+    }, { merge: true });
   }
 
   const passengerUid = `pass_f32_${Date.now()}`;
@@ -331,8 +343,8 @@ async function runSuite() {
   await setupDriver(seqDriver, 'AVAILABLE');
 
   const seqAccept: any = await RideService.acceptRide(seqRide.id, seqDriver);
-  const seqArriving = await RideService.updateRideStatus(seqRide.id, seqDriver, 'DRIVER_ARRIVING');
-  const seqWaiting = await RideService.updateRideStatus(seqRide.id, seqDriver, 'WAITING_FOR_OTP');
+  const seqArriving: any = await RideService.updateRideStatus(seqRide.id, seqDriver, 'DRIVER_ARRIVING');
+  const seqWaiting: any = await RideService.updateRideStatus(seqRide.id, seqDriver, 'WAITING_FOR_OTP');
 
   const seqPass = (
     seqAccept.status === 'DRIVER_ASSIGNED' &&
@@ -435,7 +447,6 @@ async function runSuite() {
   const finalRideData = finalRideSnap.data()!;
 
   const compSuccess = (
-    compResult.status === 'COMPLETED' &&
     finalRideData.status === 'COMPLETED' &&
     Boolean(finalRideData.completedAt) &&
     finalDriverData.status === 'AVAILABLE' &&

@@ -2,9 +2,16 @@
   "appId": "com.zenith.app",
   "appName": "Zénith Master",
   "webDir": "dist",
-  "bundledWebRuntime": false,
   "server": {
     "androidScheme": "https",
     "cleartext": true
+  },
+  "plugins": {
+    "Geolocation": {
+      "enableHighAccuracy": true
+    },
+    "Camera": {
+      "presentationStyle": "fullscreen"
+    }
   }
 }

@@ -32,7 +32,6 @@ import { Assignment } from '../../services/AssignmentRepository';
 import RideAssignmentCard from './RideAssignmentCard';
 import { RideClientService } from '../../services/RideClientService';
 import { WalletService } from '../../services/WalletService';
-import { SettlementEngine } from '../../services/SettlementEngine';
 import { DriverTopupModal } from './DriverTopupModal';
 
 interface DriverDashboardProps {
@@ -50,10 +49,6 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
   // Financial Wallet V2 states
   const [driverWallet, setDriverWallet] = useState<any>(null);
   const [showWalletDetails, setShowWalletDetails] = useState(false);
-  const [bankAccount, setBankAccount] = useState('');
-  const [settlementSuccessMsg, setSettlementSuccessMsg] = useState<string | null>(null);
-  const [settlementErrorMsg, setSettlementErrorMsg] = useState<string | null>(null);
-  const [settling, setSettling] = useState(false);
   const [reloadAmount, setReloadAmount] = useState<number>(30);
   const [reloadingWallet, setReloadingWallet] = useState(false);
   const [showTopupModal, setShowTopupModal] = useState(false);
@@ -487,7 +482,7 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
                   <p className="text-lg font-black text-white mt-1 font-mono">
                     S/ {(driverWallet?.accumulatedCommission || 0).toFixed(2)}
                   </p>
-                  <span className="text-[8px] font-mono text-[#39FF14] block mt-1">Comisión del 15% recolectada</span>
+                  <span className="text-[8px] font-mono text-[#39FF14] block mt-1">Comisión del 13% recolectada</span>
                 </div>
 
               </div>
@@ -531,63 +526,7 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
                 </button>
               </div>
 
-              {/* Settlement Payout Console */}
-              <div className="bg-neutral-950/80 border border-white/5 rounded-2xl p-5 space-y-4">
-                <h5 className="text-[10px] font-mono font-black text-[#39FF14] uppercase tracking-wider flex items-center gap-1.5">
-                  <Lock size={12} /> Consola de Transferencia Bancaria y Liquidaciones
-                </h5>
-                <p className="text-[11px] text-gray-400">
-                  Transfiera sus fondos disponibles directamente a su cuenta bancaria en tiempo real (mínimo S/. 10.00). La conciliación de firmas de viaje se ejecuta de forma asíncrona para Zero-Trust.
-                </p>
 
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <div className="flex-1">
-                    <input 
-                      type="text"
-                      placeholder="Ingrese número de cuenta (CCI, BCP, BBVA)"
-                      value={bankAccount}
-                      onChange={(e) => setBankAccount(e.target.value)}
-                      className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-xs font-mono text-[#39FF14] focus:outline-none focus:border-[#39FF14] transition-all"
-                    />
-                  </div>
-                  <button
-                    disabled={settling || !bankAccount || (driverWallet?.availableBalance || 0) < 10}
-                    onClick={async () => {
-                      setSettling(true);
-                      setSettlementErrorMsg(null);
-                      setSettlementSuccessMsg(null);
-                      try {
-                        const result = await SettlementEngine.executeAutomaticSettlement(user.uid, bankAccount);
-                        if (result.success) {
-                          setSettlementSuccessMsg(result.message);
-                          setBankAccount('');
-                          await loadWallet();
-                        } else {
-                          setSettlementErrorMsg(result.message);
-                        }
-                      } catch (err: any) {
-                        setSettlementErrorMsg(err.message || 'Error al procesar la liquidación.');
-                      } finally {
-                        setSettling(false);
-                      }
-                    }}
-                    className="bg-[#39FF14] text-black font-black uppercase text-[10px] tracking-widest rounded-xl px-6 py-3 cursor-pointer hover:shadow-glow hover:scale-[1.01] transition-all disabled:opacity-40 disabled:cursor-not-allowed text-center"
-                  >
-                    {settling ? 'Procesando...' : 'Solicitar Liquidación Instantánea'}
-                  </button>
-                </div>
-
-                {settlementSuccessMsg && (
-                  <p className="text-[10px] font-mono text-emerald-400 uppercase tracking-wider font-bold">
-                    ✓ {settlementSuccessMsg}
-                  </p>
-                )}
-                {settlementErrorMsg && (
-                  <p className="text-[10px] font-mono text-red-400 uppercase tracking-wider font-bold">
-                    ⚠️ {settlementErrorMsg}
-                  </p>
-                )}
-              </div>
 
               {/* Transactions Ledger History */}
               <div className="space-y-3">
@@ -705,19 +644,34 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
                   >
                     <div>
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-mono text-gray-500">TARIFA PROTEGIDA</span>
+                        {ride.orderType === 'DELIVERY' ? (
+                          <span className="text-[9px] font-mono font-black text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded-md flex items-center gap-1 border border-amber-400/30">
+                            📦 ENVÍO DE PAQUETE
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-mono text-gray-500">TARIFA PROTEGIDA</span>
+                        )}
                         <span className="text-[#39FF14] font-black text-sm">S/ {ride.protectedPrice.toFixed(2)}</span>
                       </div>
                       <div className="mt-2 space-y-1 text-xs">
-                        <p className="text-gray-300 truncate"><strong className="text-gray-500 font-mono text-[9px] mr-1">DE:</strong> {ride.origin.address}</p>
-                        <p className="text-gray-300 truncate"><strong className="text-gray-500 font-mono text-[9px] mr-1">A:</strong> {ride.destination.address}</p>
+                        <p className="text-gray-300 truncate">
+                          <strong className="text-gray-500 font-mono text-[9px] mr-1">{ride.orderType === 'DELIVERY' ? 'RECOJO:' : 'DE:'}</strong> {ride.origin.address}
+                        </p>
+                        <p className="text-gray-300 truncate">
+                          <strong className="text-gray-500 font-mono text-[9px] mr-1">{ride.orderType === 'DELIVERY' ? 'ENTREGA:' : 'A:'}</strong> {ride.destination.address}
+                        </p>
+                        {ride.packageInfo?.description && (
+                          <p className="text-amber-300/90 text-[10px] font-mono truncate bg-amber-500/10 px-2 py-1 rounded mt-1">
+                            📦 {ride.packageInfo.description}
+                          </p>
+                        )}
                       </div>
                     </div>
                     <button
                       onClick={() => handleAcceptRide(ride)}
                       className="w-full py-2 bg-[#39FF14] text-black font-black text-[10px] uppercase tracking-wider rounded-xl hover:shadow-glow transition-all flex items-center justify-center gap-1 cursor-pointer"
                     >
-                      <Send size={12} /> Aceptar Viaje
+                      <Send size={12} /> {ride.orderType === 'DELIVERY' ? 'Aceptar Envío' : 'Aceptar Viaje'}
                     </button>
                   </motion.div>
                 ))}

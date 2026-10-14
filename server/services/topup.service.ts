@@ -157,6 +157,10 @@ export const TopupService = {
       throw new Error(`ESTADO_TERMINAL: La recarga se encuentra en estado terminal (${topup.status}).`);
     }
 
+    if (topup.status === 'VERIFIED') {
+      throw new Error('ESTADO_INMUTABLE: Una solicitud VERIFIED ya fue conciliada y no puede recibir nuevos comprobantes.');
+    }
+
     if (new Date(topup.expiresAt) < new Date()) {
       throw new Error('SOLICITUD_EXPIRADA: Esta solicitud de recarga ha superado el tiempo límite.');
     }
@@ -206,6 +210,14 @@ export const TopupService = {
       throw new Error('IDEMPOTENCIA: Esta solicitud ya fue acreditada.');
     }
 
+    if (topup.status === 'REJECTED') {
+      throw new Error('ESTADO_TERMINAL: Una solicitud REJECTED no puede volver a conciliarse.');
+    }
+
+    if (topup.status === 'VERIFIED') {
+      throw new Error('ESTADO_INMUTABLE: Una conciliación VERIFIED no puede ser reemplazada; debe pasar por acreditación o rechazo explícito.');
+    }
+
     if (new Date(topup.expiresAt) < new Date()) {
       throw new Error('SOLICITUD_EXPIRADA: La solicitud ha expirado.');
     }
@@ -216,16 +228,31 @@ export const TopupService = {
         ? `MOV-${bankMovement.operationNumber}-${bankMovement.securityCode}`
         : `MOV-${bankMovement.date}-${bankMovement.time}-${bankMovement.amount}-${bankMovement.payerName.replace(/\s+/g, '_')}`;
 
-      // Persistir el movimiento físico confirmado en bank_movements de Firestore
-      await db.collection('bank_movements').doc(movementDocId).set({
-        ...bankMovement,
-        id: movementDocId,
-        source: 'YAPE_PERSONAL_MANUAL',
-        operatorId,
-        matchedTopupId: topupId,
-        confirmedAt: new Date().toISOString(),
-        createdAtServer: FieldValue.serverTimestamp()
-      }, { merge: true });
+      // Reclamar el movimiento de forma atómica antes de modificarlo.
+      // Esto evita que dos recargas distintas puedan asociarse al mismo movimiento
+      // si llegan casi simultáneamente.
+      const movementRef = db.collection('bank_movements').doc(movementDocId);
+      await db.runTransaction(async (transaction) => {
+        const movementSnap = await transaction.get(movementRef);
+        if (movementSnap.exists) {
+          const existingTopupId = movementSnap.data()?.matchedTopupId;
+          if (existingTopupId && existingTopupId !== topupId) {
+            throw new Error(
+              `MOVIMIENTO_YA_ASIGNADO: El movimiento bancario ${movementDocId} ya está vinculado a la recarga ${existingTopupId}.`
+            );
+          }
+        }
+
+        transaction.set(movementRef, {
+          ...bankMovement,
+          id: movementDocId,
+          source: 'YAPE_PERSONAL_MANUAL',
+          operatorId,
+          matchedTopupId: topupId,
+          confirmedAt: new Date().toISOString(),
+          createdAtServer: FieldValue.serverTimestamp()
+        }, { merge: true });
+      });
     }
 
     // Evaluar con el motor de conciliación humana
@@ -277,6 +304,22 @@ export const TopupService = {
 
     if (topup.status !== 'REVIEW') {
       throw new Error(`ESTADO_INVALIDO: Solo se pueden aprobar solicitudes en estado REVIEW. Estado actual: ${topup.status}`);
+    }
+
+    // La aprobación manual no puede crear una conciliación desde cero.
+    // Debe existir una conciliación REVIEW trazable al movimiento confirmado.
+    if (
+      topup.reconciliation?.status !== 'REVIEW' ||
+      !topup.reconciliation.matchedMovementId ||
+      topup.bankMovementId !== topup.reconciliation.matchedMovementId
+    ) {
+      throw new Error('CONCILIACION_NO_VERIFICABLE: El caso REVIEW no tiene una conciliación trazable a un movimiento confirmado.');
+    }
+
+    const movementRef = db.collection('bank_movements').doc(topup.reconciliation.matchedMovementId);
+    const movementSnap = await movementRef.get();
+    if (!movementSnap.exists || movementSnap.data()?.matchedTopupId !== topupId) {
+      throw new Error('MOVIMIENTO_NO_VERIFICADO: No existe un movimiento bancario confirmado y vinculado a esta recarga.');
     }
 
     const nowIso = new Date().toISOString();

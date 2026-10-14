@@ -1,0 +1,49 @@
+name: ZENITH Phase 3.4 Financial Reconciliation Audit
+
+on:
+  push:
+    branches:
+      - zenith/phase-3.3-settlement
+  workflow_dispatch:
+
+jobs:
+  financial-reconciliation-audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # firebase-tools 15.x requires Java 21+ for the emulator runtime.
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Verify Java runtime
+        run: java -version
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript validation
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
+
+      - name: Ride settlement audit
+        run: npm run test:settlement
+
+      - name: Financial reconciliation audit
+        run: npm run test:financial-reconciliation
+
+      - name: Yape top-up E2E audit
+        run: npm run test:topup

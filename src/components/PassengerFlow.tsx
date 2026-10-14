@@ -6,7 +6,7 @@
 // ============================================================================
 
 import { useEffect, useState } from 'react';
-import { collection, query, where, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, limit } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, updateDoc, doc, serverTimestamp, limit } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Ride, RideStatus, User, Location, SolicitudeStatus, TransitStatus, DeliveryStatus, CustodyStatus } from '../types';
 import { NotificationService } from '../services/NotificationService';
@@ -14,14 +14,14 @@ import MapContainer from './MapContainer';
 import TrackingMap from './maps/TrackingMap';
 import PassengerActiveTripHUD from './PassengerActiveTripHUD';
 import PlacesAutocomplete from './PlacesAutocomplete';
-import { calculatePricing, PricingResult } from '../utils/pricingEngine';
+import { PricingResult } from '../utils/pricingEngine';
 import { PricingService } from '../services/PricingService';
 import { RideClientService } from '../services/RideClientService';
 import Chat from './Chat';
 import ShareRide from './ShareRide';
 import SOSButton from './SOSButton';
 import ScheduledRides from './ScheduledRides';
-import { MessageSquare, RefreshCw, Radio, Compass } from 'lucide-react';
+import { MessageSquare, RefreshCw, Radio, Compass, CreditCard } from 'lucide-react';
 import { 
   MapPin, 
   DollarSign, 
@@ -39,12 +39,7 @@ import {
   Activity
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { WalletService } from '../services/WalletService';
-import { PaymentEngine, PaymentMethodDetails } from '../services/PaymentEngine';
-import { TransactionEngine } from '../services/TransactionEngine';
 import { 
-  CreditCard, 
-  QrCode, 
   History, 
   FileText, 
   PlusCircle, 
@@ -55,6 +50,7 @@ import {
 } from 'lucide-react';
 import ZenithOrderCreationModal from './delivery/ZenithOrderCreationModal';
 import ZenithActiveOperationHUD from './delivery/ZenithActiveOperationHUD';
+import { nativePlatform } from '../services/NativePlatformService';
 import {
   getLastKnownLocation,
   requestCurrentBrowserPosition,
@@ -71,6 +67,12 @@ type PipelineStep = 'idle' | 'calculating' | 'voucher' | 'confirming_payment' | 
 export default function PassengerFlow({ user }: PassengerFlowProps) {
   const [activeRide, setActiveRide] = useState<Ride | null>(null);
   
+  // Delivery vs Ride mode
+  const [serviceMode, setServiceMode] = useState<'delivery' | 'ride'>('delivery');
+  const [packageDescription, setPackageDescription] = useState<string>('');
+  const [recipientName, setRecipientName] = useState<string>('');
+  const [recipientPhone, setRecipientPhone] = useState<string>('');
+
   // Geolocation & Route selection states (Multiciudad Perú dinámico)
   const [origin, setOrigin] = useState<Location>(() => {
     const last = getLastKnownLocation();
@@ -125,7 +127,6 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
   const [passengerFeedback, setPassengerFeedback] = useState<string>('');
 
   // Passenger Payment Center V2 states
-  const [selectedMethod, setSelectedMethod] = useState<'card' | 'yape' | 'plin' | 'cash'>('cash');
   const [promoCode, setPromoCode] = useState('');
   const [appliedPromo, setAppliedPromo] = useState<any>(null);
   const [paymentError, setPaymentError] = useState<string | null>(null);
@@ -156,23 +157,19 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
     }
   };
 
-  // Initialize real GPS position for passenger on mount
+  // Initialize real GPS position for passenger on mount and trigger native permissions in APK
   useEffect(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setOrigin({
-            address: `Mi Ubicación Actual (${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)})`,
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          });
-        },
-        (error) => {
-          console.warn("[ZENITH-GPS] No se pudo obtener la ubicación del pasajero:", error.message);
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-      );
-    }
+    nativePlatform.requestCorePermissions().then(() => {
+      nativePlatform.getCurrentPosition().then((pos) => {
+        setOrigin({
+          address: `Mi Ubicación Actual (${pos.lat.toFixed(4)}, ${pos.lng.toFixed(4)})`,
+          lat: pos.lat,
+          lng: pos.lng,
+        });
+      }).catch((err) => {
+        console.warn("[ZENITH-GPS] Fallback al obtener ubicación inicial:", err?.message || err);
+      });
+    });
   }, []);
 
   // Load historical rides
@@ -309,7 +306,7 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
     }
   };
 
-  // Secure checkout process utilizing PaymentEngine and TransactionEngine
+  // Publicar viaje con el medio de pago acordado directamente entre cliente y motorizado.
   const confirmPaymentAndPublishRide = async () => {
     if (!pricing) return;
     
@@ -321,31 +318,6 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
     const finalPrice = Math.max(0, Number((pricing.totalFare - discountAmount).toFixed(2)));
 
     try {
-      // 2. Initialize payment record in state machine using PaymentEngine
-      const tempRide: any = {
-        id: `ride_temp_${Date.now()}`,
-        passengerId: user.uid,
-        passengerName: user.fullName,
-        origin,
-        destination,
-        protectedPrice: pricing.totalFare,
-        finalPrice: finalPrice,
-        status: RideStatus.SEARCHING_DRIVER
-      };
-
-      const paymentDetails: PaymentMethodDetails = {
-        method: selectedMethod as any,
-        amount: finalPrice,
-        phone: (selectedMethod === 'yape' || selectedMethod === 'plin') ? '999888777' : undefined,
-        cardNumber: selectedMethod === 'card' ? '1234567812345678' : undefined
-      };
-
-      const paymentResult = await PaymentEngine.processPayment(tempRide, paymentDetails);
-
-      if (!paymentResult.success) {
-        throw new Error(paymentResult.message || 'Transacción denegada por el motor antifraude.');
-      }
-
       setPipelineStep('creating_ride');
       await new Promise((resolve) => setTimeout(resolve, 800));
 
@@ -378,17 +350,24 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
         passengerId: user.uid,
         passengerName: user.fullName,
         passengerPhone: user.phone || '',
-        paymentMethod: selectedMethod,
-        paymentState: paymentResult.status,
-        paymentId: paymentResult.transactionId || `tx_${Date.now()}`,
-        idempotencyKey: `ride_${user.uid}_${pricing.quoteId}`
+        idempotencyKey: `ride_${user.uid}_${pricing.quoteId}`,
+        orderType: serviceMode === 'delivery' ? 'DELIVERY' : 'RIDE',
+        packageInfo: serviceMode === 'delivery' ? {
+          description: packageDescription.trim() || 'Paquete / Encargo general',
+          type: 'ENVELOPE_OR_SMALL'
+        } : undefined,
+        receptor: serviceMode === 'delivery' ? {
+          name: recipientName.trim() || 'Receptor en destino',
+          phone: recipientPhone.trim() || '',
+          address: destination.address
+        } : undefined
       });
 
       if (!rideResponse.success) {
         throw new Error('El servidor rechazó la creación del viaje.');
       }
 
-      setPaymentSuccess(`¡Pago autorizado con éxito por S/ ${finalPrice.toFixed(2)}! Buscando conductor...`);
+      setPaymentSuccess(`Medio de pago registrado. Buscando conductor...`);
       await loadPassengerFinancials(); // Refresh wallet balance
       
       // Keep state clear and let onSnapshot handle ride navigation
@@ -802,49 +781,87 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
             </div>
           )}
 
-          {/* QUICK CTA: NUEVA OPERACIÓN MOTORIZADO ZÉNITH MVP V1.1 */}
-          <div className="hud-card p-6 bg-gradient-to-r from-black/80 to-[#39FF14]/10 border border-[#39FF14]/30 rounded-3xl text-left flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-[#39FF14]/20 text-[#39FF14] font-black uppercase tracking-widest">
-                MVP V1.1 OPERATIVO
+          {/* SECCIÓN PRINCIPAL: ENVÍO DE PAQUETE PUNTO A A PUNTO B */}
+          <div className="hud-card p-6 sm:p-8 space-y-6 bg-black/40 backdrop-blur-xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Package size={26} className="text-[#39FF14]" />
+                <div>
+                  <h2 className="text-2xl sm:text-3xl font-black uppercase italic tracking-tighter text-white">
+                    Enviar Paquete (Punto A → B)
+                  </h2>
+                  <p className="text-[10px] font-mono text-gray-400 uppercase tracking-wider mt-0.5">
+                    Servicio urbano de courier y mensajería en moto
+                  </p>
+                </div>
+              </div>
+              <span className="text-[9px] font-mono text-[#39FF14] bg-[#39FF14]/10 border border-[#39FF14]/30 px-2.5 py-1 rounded-lg uppercase font-black tracking-wider">
+                Courier Express
               </span>
-              <h3 className="text-lg font-black uppercase italic tracking-tight text-white">
-                Nueva Operación de Entrega en Moto
-              </h3>
-              <p className="text-xs text-gray-400 font-mono">
-                Control de 4 protagonistas, cláusula de contingencia, niveles de evidencia y custodia estipulada.
-              </p>
-            </div>
-            <button
-              onClick={() => setShowOrderCreationModal(true)}
-              className="py-3 px-6 rounded-2xl bg-[#39FF14] hover:bg-[#32e012] text-black font-mono text-xs font-black uppercase tracking-wider shadow-glow flex items-center gap-2 shrink-0 cursor-pointer"
-            >
-              <Package size={16} />
-              Crear Operación
-            </button>
-          </div>
-
-          <div className="hud-card p-8 space-y-6 bg-black/40 backdrop-blur-xl">
-            <div className="flex items-center gap-3">
-              <Navigation size={24} className="text-[#39FF14]" />
-              <h2 className="text-3xl font-black uppercase italic tracking-tighter">Planificar Ruta</h2>
             </div>
             
-            <div className="space-y-5">
+            <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <PlacesAutocomplete
-                  placeholder="PUNTO DE ORIGEN"
-                  value={origin.address}
-                  onLocationSelect={(loc) => setOrigin(loc)}
-                  icon={<MapPin size={18} className="text-[#39FF14]" />}
-                />
+                <div>
+                  <label className="text-[10px] font-mono text-gray-400 uppercase font-bold pl-1 mb-1 block">
+                    1. Punto de Recojo (¿Dónde se recoge el paquete?)
+                  </label>
+                  <PlacesAutocomplete
+                    placeholder="DIRECCIÓN DE RECOJO"
+                    value={origin.address}
+                    onLocationSelect={(loc) => setOrigin(loc)}
+                    icon={<MapPin size={18} className="text-[#39FF14]" />}
+                  />
+                </div>
 
-                <PlacesAutocomplete
-                  placeholder="DESTINO OBJETIVO"
-                  value={destination.address}
-                  onLocationSelect={(loc) => setDestination(loc)}
-                  icon={<Navigation size={18} className="text-white/60" />}
-                />
+                <div>
+                  <label className="text-[10px] font-mono text-gray-400 uppercase font-bold pl-1 mb-1 block">
+                    2. Punto de Entrega (¿A dónde se lleva el paquete?)
+                  </label>
+                  <PlacesAutocomplete
+                    placeholder="DIRECCIÓN DE ENTREGA"
+                    value={destination.address}
+                    onLocationSelect={(loc) => setDestination(loc)}
+                    icon={<Navigation size={18} className="text-white/60" />}
+                  />
+                </div>
+              </div>
+
+              {/* Delivery Specific Fields */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-white/5">
+                <div>
+                  <label className="text-[10px] font-mono text-gray-400 uppercase font-bold pl-1 mb-1 block">
+                    ¿Qué contiene el paquete o encargo?
+                  </label>
+                  <input
+                    type="text"
+                    value={packageDescription}
+                    onChange={(e) => setPackageDescription(e.target.value)}
+                    placeholder="Ej: Documentos, llaves, paquete pequeño..."
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-xs text-white placeholder-gray-500 focus:border-[#39FF14] outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-mono text-gray-400 uppercase font-bold pl-1 mb-1 block">
+                    Persona que recibe en destino (Opcional)
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={recipientName}
+                      onChange={(e) => setRecipientName(e.target.value)}
+                      placeholder="Nombre contacto"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-xs text-white placeholder-gray-500 focus:border-[#39FF14] outline-none"
+                    />
+                    <input
+                      type="tel"
+                      value={recipientPhone}
+                      onChange={(e) => setRecipientPhone(e.target.value)}
+                      placeholder="Celular"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-3 text-xs text-white placeholder-gray-500 focus:border-[#39FF14] outline-none"
+                    />
+                  </div>
+                </div>
               </div>
 
               {user.favorites && user.favorites.length > 0 && (
@@ -854,7 +871,7 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
                     <button
                       key={fav.id}
                       onClick={() => setDestination({ address: fav.address, lat: fav.lat, lng: fav.lng })}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-[#39FF14]/15 hover:text-[#39FF14] border border-white/10 hover:border-[#39FF14]/30 rounded-lg text-xs font-mono uppercase tracking-tight transition-all"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-[#39FF14]/15 hover:text-[#39FF14] border border-white/10 hover:border-[#39FF14]/30 rounded-lg text-xs font-mono uppercase tracking-tight transition-all cursor-pointer"
                     >
                       <MapPin size={10} className="text-[#39FF14]" />
                       <span>{fav.name}</span>
@@ -866,9 +883,9 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
               <button 
                 onClick={executeSingleActionPipeline}
                 disabled={!destination.address}
-                className="w-full btn-tactical shadow-glow uppercase italic tracking-tighter text-lg py-5"
+                className="w-full btn-tactical shadow-glow uppercase italic tracking-tighter text-lg py-5 cursor-pointer disabled:opacity-50"
               >
-                PAGAR Y PUBLICAR
+                COTIZAR Y PEDIR MOTORIZADO DE ENVÍO
               </button>
             </div>
           </div>
@@ -928,7 +945,7 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
                               <div>
                                 <p className="text-white font-bold truncate max-w-[180px]">A: {r.destination.address}</p>
                                 <p className="text-[9px] font-mono text-gray-500 uppercase mt-0.5">
-                                  Método: {r.paymentMethod || 'Wallet'} · Estado: {r.paymentState || 'Settle'}
+                                  Pago: directo al motorizado
                                 </p>
                               </div>
                               <span className="font-mono text-[#39FF14] font-black">
@@ -973,7 +990,7 @@ BOLETA DE VENTA ELECTRÓNICA
 NÚMERO DE COMPROBANTE: B001-${Math.floor(Math.random() * 900000 + 100000)}
 FECHA DE EMISIÓN: ${new Date().toLocaleDateString('es-PE')}
 CLIENTE: ${user.fullName.toUpperCase()}
-MÉTODO DE PAGO: ${(r.paymentMethod || 'wallet').toUpperCase()}
+MÉTODO DE PAGO: PAGO DIRECTO AL MOTORIZADO
 =========================================
 DETALLE:
 Servicio de transporte urbano - ZÉNITH Perú
@@ -1115,41 +1132,6 @@ Consulte su comprobante en la web oficial.`;
                     <div>
                       <p className="text-[9px] font-mono text-gray-500 uppercase">Tiempo Estimado</p>
                       <p className="text-xl font-black text-white italic mono-data">{pricing.duration} MIN</p>
-                    </div>
-                  </div>
-
-                  {/* PAYMENT METHOD CHOICES */}
-                  <div className="border-t border-white/5 pt-4 text-left">
-                    <p className="text-[9px] font-mono text-gray-500 uppercase font-black tracking-widest mb-2">Seleccione Método de Pago (Directo al Conductor)</p>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      <button
-                        onClick={() => setSelectedMethod('yape')}
-                        className={`py-2 px-3 border rounded-xl flex flex-col items-center gap-1 cursor-pointer transition-all ${selectedMethod === 'yape' ? 'bg-purple-600/10 border-purple-500 text-purple-400' : 'bg-black/30 border-white/10 text-white hover:border-white/20'}`}
-                      >
-                        <QrCode size={14} />
-                        <span className="text-[9px] font-mono font-bold uppercase">Yape</span>
-                      </button>
-                      <button
-                        onClick={() => setSelectedMethod('plin')}
-                        className={`py-2 px-3 border rounded-xl flex flex-col items-center gap-1 cursor-pointer transition-all ${selectedMethod === 'plin' ? 'bg-cyan-600/10 border-cyan-500 text-cyan-400' : 'bg-black/30 border-white/10 text-white hover:border-white/20'}`}
-                      >
-                        <QrCode size={14} />
-                        <span className="text-[9px] font-mono font-bold uppercase">Plin</span>
-                      </button>
-                      <button
-                        onClick={() => setSelectedMethod('card')}
-                        className={`py-2 px-3 border rounded-xl flex flex-col items-center gap-1 cursor-pointer transition-all ${selectedMethod === 'card' ? 'bg-blue-600/10 border-blue-500 text-blue-400' : 'bg-black/30 border-white/10 text-white hover:border-white/20'}`}
-                      >
-                        <CreditCard size={14} />
-                        <span className="text-[9px] font-mono font-bold uppercase">Tarjeta</span>
-                      </button>
-                      <button
-                        onClick={() => setSelectedMethod('cash')}
-                        className={`py-2 px-3 border rounded-xl flex flex-col items-center gap-1 cursor-pointer transition-all ${selectedMethod === 'cash' ? 'bg-emerald-600/10 border-emerald-500 text-emerald-400' : 'bg-black/30 border-white/10 text-white hover:border-white/20'}`}
-                      >
-                        <DollarSign size={14} />
-                        <span className="text-[9px] font-mono font-bold uppercase">Efectivo</span>
-                      </button>
                     </div>
                   </div>
 
