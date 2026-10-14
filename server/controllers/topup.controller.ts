@@ -25,7 +25,7 @@ export const topupController = {
       const { amount } = req.body;
       const requestedAmount = Number(amount);
 
-      if (isNaN(requestedAmount) || requestedAmount <= 0) {
+      if (!Number.isFinite(requestedAmount) || requestedAmount <= 0 || Math.round(requestedAmount * 100) <= 0) {
         return res.status(400).json({
           success: false,
           message: 'El monto de recarga debe ser un número positivo mayor a S/ 0.00.'
@@ -71,7 +71,7 @@ export const topupController = {
       }
 
       const { topupId, receiptBase64, receiptUrl } = req.body;
-      if (!topupId || (!receiptBase64 && !receiptUrl)) {
+      if (!topupId || (!receiptBase64 && !receiptUrl) || (receiptBase64 && typeof receiptBase64 !== 'string') || (receiptUrl && typeof receiptUrl !== 'string')) {
         return res.status(400).json({
           success: false,
           message: 'Se requiere topupId y la captura en base64 o URL.'
@@ -103,6 +103,10 @@ export const topupController = {
     try {
       const user = (req as any).user;
       const { topupId } = req.params;
+
+      if (!user?.uid) {
+        return res.status(401).json({ success: false, message: 'Usuario no autenticado.' });
+      }
 
       const topup = await TopupService.getTopupById(topupId);
       if (!topup) {
