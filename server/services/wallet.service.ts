@@ -117,9 +117,14 @@ export const WalletService = {
       // 4. Confirmar que el movimiento no haya sido utilizado anteriormente
       const movementFingerprint = topupData.reconciliation.matchedMovementId;
       const processedRef = db.collection('processed_bank_movements').doc(movementFingerprint);
+      const movementRef = db.collection('bank_movements').doc(movementFingerprint);
       const processedSnap = await transaction.get(processedRef);
+      const bankMovementSnap = await transaction.get(movementRef);
       if (processedSnap.exists) {
         throw new Error(`MOVIMIENTO_REUTILIZADO: El movimiento bancario ${movementFingerprint} ya fue procesado en la recarga ${processedSnap.data()?.topupId}.`);
+      }
+      if (!bankMovementSnap.exists || bankMovementSnap.data()?.matchedTopupId !== topupId) {
+        throw new Error('MOVIMIENTO_NO_VERIFICADO: No existe un movimiento confirmado y vinculado a esta recarga.');
       }
 
       // 5. Leer Wallet actual del conductor
