@@ -1,8 +1,10 @@
+
 name: ZENITH Android APK
 
 on:
   push:
     branches:
+      - main
       - zenith/phase-3.3-settlement
       - test/android-gps-permissions
   workflow_dispatch:
@@ -18,6 +20,7 @@ permissions:
 jobs:
   build-android-apk:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,13 +35,32 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: "21"
 
       - name: Install project dependencies
         run: npm ci
 
-      - name: Install Capacitor Android integration
-        run: npm install --no-save @capacitor/cli@7 @capacitor/core@7 @capacitor/android@7 @capacitor/geolocation@7 @capacitor/camera@7 @capacitor/local-notifications@7
+      - name: Validate Capacitor dependencies
+        run: |
+          node -e "
+            const p = require('./package.json');
+            const deps = {
+              ...p.dependencies,
+              ...p.devDependencies
+            };
+            for (const name of [
+              '@capacitor/core',
+              '@capacitor/cli',
+              '@capacitor/android'
+            ]) {
+              if (!deps[name]) {
+                console.error('Missing dependency:', name);
+                process.exitCode = 1;
+              } else {
+                console.log(name + ': ' + deps[name]);
+              }
+            }
+          "
 
       - name: Validate TypeScript
         run: npm run lint
@@ -51,16 +73,29 @@ jobs:
           GITHUB_REF: ${{ github.ref }}
         run: |
           API_URL="$INPUT_API_BASE_URL"
-          if [ -z "$API_URL" ]; then API_URL="$ZENITH_API_BASE_URL"; fi
+
+          if [ -z "$API_URL" ]; then
+            API_URL="$ZENITH_API_BASE_URL"
+          fi
+
           if [ -z "$API_URL" ] && [ "$GITHUB_REF" = "refs/heads/test/android-gps-permissions" ]; then
             API_URL="https://zenith-preview.test"
             echo "::warning::Using placeholder preview URL; this APK may not connect to a real backend."
           fi
-          test -n "$API_URL"
+
+          if [ -z "$API_URL" ]; then
+            echo "::error::Missing backend URL. Configure ZENITH_API_BASE_URL or provide api_base_url."
+            exit 1
+          fi
+
           case "$API_URL" in
             https://*) ;;
-            *) echo "API URL must use HTTPS"; exit 1 ;;
+            *)
+              echo "::error::API URL must use HTTPS."
+              exit 1
+              ;;
           esac
+
           echo "api_base_url=$API_URL" >> "$GITHUB_OUTPUT"
 
       - name: Build web application
@@ -72,10 +107,16 @@ jobs:
             echo "::error::Missing repository secret GOOGLE_MAPS_PLATFORM_KEY"
             exit 1
           fi
+
           npm run build
 
-      - name: Create Android project
-        run: npx cap add android
+      - name: Ensure Android platform exists
+        run: |
+          if [ ! -d android ]; then
+            npx cap add android
+          else
+            echo "Using the Android project already present in the repository."
+          fi
 
       - name: Configure Android permissions and manifest
         run: node scripts/patch-android-manifest.cjs
@@ -89,8 +130,14 @@ jobs:
 
       - name: Verify APK
         run: |
-          test -f android/app/build/outputs/apk/debug/app-debug.apk
-          ls -lh android/app/build/outputs/apk/debug/app-debug.apk
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "::error::APK was not generated."
+            exit 1
+          fi
+
+          ls -lh "$APK"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
