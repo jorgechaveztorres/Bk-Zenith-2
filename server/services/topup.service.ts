@@ -202,86 +202,167 @@ export const TopupService = {
     operatorId: string
   ): Promise<TopupRequest> => {
     if (!db) throw new Error('FIRESTORE_UNAVAILABLE: Base de datos no disponible.');
+    if (!operatorId || typeof operatorId !== 'string') {
+      throw new Error('OPERADOR_INVALIDO: Se requiere identificar al operador.');
+    }
+
+    if (bankMovement) {
+      if (
+        typeof bankMovement.amount !== 'number' ||
+        !Number.isFinite(bankMovement.amount) ||
+        bankMovement.amount <= 0 ||
+        Math.round(bankMovement.amount * 100) <= 0
+      ) {
+        throw new Error('MONTO_MOVIMIENTO_INVALIDO: El monto recibido debe ser un número positivo válido.');
+      }
+      if (
+        typeof bankMovement.date !== 'string' ||
+        typeof bankMovement.time !== 'string' ||
+        typeof bankMovement.payerName !== 'string' ||
+        !bankMovement.payerName.trim()
+      ) {
+        throw new Error('MOVIMIENTO_INVALIDO: Fecha, hora y nombre del pagador son obligatorios.');
+      }
+    }
 
     const topupRef = db.collection('topup_requests').doc(topupId);
-    const snap = await topupRef.get();
-    if (!snap.exists) throw new Error('RECARGA_NO_ENCONTRADA: Recarga no encontrada en Firestore.');
+    const initialSnap = await topupRef.get();
+    if (!initialSnap.exists) throw new Error('RECARGA_NO_ENCONTRADA: Recarga no encontrada en Firestore.');
 
-    const topup = snap.data() as TopupRequest;
-
-    if (topup.status === 'CREDITED') {
+    const initialTopup = initialSnap.data() as TopupRequest;
+    if (initialTopup.status === 'CREDITED') {
       throw new Error('IDEMPOTENCIA: Esta solicitud ya fue acreditada.');
     }
-
-    if (topup.status === 'REJECTED') {
+    if (initialTopup.status === 'REJECTED') {
       throw new Error('ESTADO_TERMINAL: Una solicitud REJECTED no puede volver a conciliarse.');
     }
-
-    if (topup.status === 'VERIFIED') {
+    if (initialTopup.status === 'VERIFIED') {
       throw new Error('ESTADO_INMUTABLE: Una conciliación VERIFIED no puede ser reemplazada; debe pasar por acreditación o rechazo explícito.');
     }
-
-    if (new Date(topup.expiresAt) < new Date()) {
+    if (new Date(initialTopup.expiresAt).getTime() < Date.now()) {
       throw new Error('SOLICITUD_EXPIRADA: La solicitud ha expirado.');
     }
 
-    let movementDocId: string | null = null;
-    if (bankMovement) {
-      movementDocId = bankMovement.securityCode && bankMovement.operationNumber
-        ? `MOV-${bankMovement.operationNumber}-${bankMovement.securityCode}`
-        : `MOV-${bankMovement.date}-${bankMovement.time}-${bankMovement.amount}-${bankMovement.payerName.replace(/\s+/g, '_')}`;
+    const movementDocId: string | null = bankMovement
+      ? (bankMovement.securityCode && bankMovement.operationNumber
+          ? `MOV-${bankMovement.operationNumber}-${bankMovement.securityCode}`
+          : `MOV-${bankMovement.date}-${bankMovement.time}-${bankMovement.amount}-${bankMovement.payerName.replace(/\s+/g, '_')}`)
+      : null;
 
-      // Reclamar el movimiento de forma atómica antes de modificarlo.
-      // Esto evita que dos recargas distintas puedan asociarse al mismo movimiento
-      // si llegan casi simultáneamente.
-      const movementRef = db.collection('bank_movements').doc(movementDocId);
-      await db.runTransaction(async (transaction) => {
-        const movementSnap = await transaction.get(movementRef);
-        if (movementSnap.exists) {
-          const existingTopupId = movementSnap.data()?.matchedTopupId;
-          if (existingTopupId && existingTopupId !== topupId) {
-            throw new Error(
-              `MOVIMIENTO_YA_ASIGNADO: El movimiento bancario ${movementDocId} ya está vinculado a la recarga ${existingTopupId}.`
-            );
-          }
+    // Evaluación fuera de la transacción; el estado final y la reserva del movimiento
+    // se confirman juntos dentro de una única transacción serializable.
+    let reconciliation = await ReconciliationService.evaluateReconciliation(
+      initialTopup,
+      bankMovement,
+      operatorId
+    );
+
+    const nowIso = new Date().toISOString();
+    const movementRef = movementDocId
+      ? db.collection('bank_movements').doc(movementDocId)
+      : null;
+    const processedMovementRef = movementDocId
+      ? db.collection('processed_bank_movements').doc(movementDocId)
+      : null;
+
+    await db.runTransaction(async (transaction) => {
+      // Todas las lecturas ocurren antes de cualquier escritura.
+      const currentSnap = await transaction.get(topupRef);
+      if (!currentSnap.exists) throw new Error('RECARGA_NO_ENCONTRADA: Recarga no encontrada en Firestore.');
+      const currentTopup = currentSnap.data() as TopupRequest;
+
+      let movementSnap = null;
+      let processedSnap = null;
+      if (movementRef && processedMovementRef) {
+        movementSnap = await transaction.get(movementRef);
+        processedSnap = await transaction.get(processedMovementRef);
+      }
+
+      if (currentTopup.status === 'CREDITED') {
+        throw new Error('IDEMPOTENCIA: Esta solicitud ya fue acreditada.');
+      }
+      if (currentTopup.status === 'REJECTED') {
+        throw new Error('ESTADO_TERMINAL: Una solicitud REJECTED no puede volver a conciliarse.');
+      }
+      if (currentTopup.status === 'VERIFIED') {
+        throw new Error('ESTADO_INMUTABLE: Una conciliación VERIFIED no puede ser reemplazada; debe pasar por acreditación o rechazo explícito.');
+      }
+      if (new Date(currentTopup.expiresAt).getTime() < Date.now()) {
+        throw new Error('SOLICITUD_EXPIRADA: La solicitud ha expirado.');
+      }
+
+      // No aceptar un resultado calculado sobre una versión anterior de la solicitud.
+      if (
+        currentTopup.driverId !== initialTopup.driverId ||
+        currentTopup.requestedAmount !== initialTopup.requestedAmount ||
+        currentTopup.referenceCode !== initialTopup.referenceCode
+      ) {
+        throw new Error('RECARGA_MODIFICADA: La solicitud cambió durante la conciliación; vuelva a cargarla e intente otra vez.');
+      }
+
+      const movementAlreadyProcessed = Boolean(processedSnap?.exists);
+      if (movementAlreadyProcessed && movementDocId) {
+        reconciliation = {
+          ...reconciliation,
+          status: 'REJECTED',
+          reconciledAt: nowIso,
+          reconciledBy: 'OPERATOR_MANUAL',
+          reconciledOperatorId: operatorId,
+          discrepancies: [
+            ...(reconciliation.discrepancies || []),
+            `El movimiento bancario (${movementDocId}) ya fue utilizado en una recarga previa.`
+          ],
+          notes: 'Intento de duplicidad o reuso de movimiento detectado en la comprobación transaccional.',
+          verifiedAmount: 0,
+          matchedMovementId: movementDocId
+        };
+      }
+
+      if (movementSnap?.exists && !movementAlreadyProcessed) {
+        const existingTopupId = movementSnap.data()?.matchedTopupId;
+        if (existingTopupId && existingTopupId !== topupId) {
+          throw new Error(
+            `MOVIMIENTO_YA_ASIGNADO: El movimiento bancario ${movementDocId} ya está vinculado a la recarga ${existingTopupId}.`
+          );
         }
+      }
 
+      const reconciliationAudit: TopupAuditEntry = {
+        fromStatus: currentTopup.status,
+        toStatus: reconciliation.status,
+        timestamp: nowIso,
+        actorId: operatorId,
+        actorRole: 'operator',
+        reason: `Conciliación del operador: estado resultante ${reconciliation.status}. ${reconciliation.notes || ''}`,
+        metadata: {
+          discrepancies: reconciliation.discrepancies,
+          verifiedAmount: reconciliation.verifiedAmount,
+          movementDocId,
+          duplicateMovement: movementAlreadyProcessed
+        }
+      };
+
+      // Solo reservar el movimiento si aún no está contabilizado como procesado.
+      if (movementRef && bankMovement && movementDocId && !movementAlreadyProcessed) {
         transaction.set(movementRef, {
           ...bankMovement,
           id: movementDocId,
           source: 'YAPE_PERSONAL_MANUAL',
           operatorId,
           matchedTopupId: topupId,
-          confirmedAt: new Date().toISOString(),
+          confirmedAt: nowIso,
           createdAtServer: FieldValue.serverTimestamp()
         }, { merge: true });
-      });
-    }
-
-    // Evaluar con el motor de conciliación humana
-    const reconciliation = await ReconciliationService.evaluateReconciliation(topup, bankMovement, operatorId);
-
-    const nowIso = new Date().toISOString();
-    const reconciliationAudit: TopupAuditEntry = {
-      fromStatus: topup.status,
-      toStatus: reconciliation.status,
-      timestamp: nowIso,
-      actorId: operatorId,
-      actorRole: 'operator',
-      reason: `Conciliación del operador: estado resultante ${reconciliation.status}. ${reconciliation.notes || ''}`,
-      metadata: {
-        discrepancies: reconciliation.discrepancies,
-        verifiedAmount: reconciliation.verifiedAmount
       }
-    };
 
-    await topupRef.update({
-      reconciliation,
-      verifiedAmount: reconciliation.verifiedAmount,
-      bankMovementId: movementDocId,
-      status: reconciliation.status,
-      updatedAt: nowIso,
-      auditHistory: FieldValue.arrayUnion(reconciliationAudit)
+      transaction.update(topupRef, {
+        reconciliation,
+        verifiedAmount: reconciliation.verifiedAmount,
+        bankMovementId: movementAlreadyProcessed ? null : movementDocId,
+        status: reconciliation.status,
+        updatedAt: nowIso,
+        auditHistory: FieldValue.arrayUnion(reconciliationAudit)
+      });
     });
 
     const updatedSnap = await topupRef.get();
