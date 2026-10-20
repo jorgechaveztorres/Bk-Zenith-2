@@ -1167,7 +1167,7 @@ export default function ClientOnboarding({ onComplete, onExitGuest }: ClientOnbo
                   <h3 className="text-2xl font-black uppercase italic text-white tracking-tight">2. CÓDIGO OTP DE VIAJE</h3>
                   <div className="bg-black/40 border border-white/5 rounded-2xl p-6 text-left max-w-sm mx-auto">
                     <p className="text-sm text-gray-300 leading-relaxed">
-                      Al asignar un operador, recibirá un código de autenticación rápida de <strong className="text-[#39FF14]">3 dígitos</strong> en su panel táctico. El conductor requerirá este código para inicializar la ruta de tránsito en su computadora de abordo, garantizando que abordó el vehículo correcto.
+                      Al asignar un operador, recibirá un código de autenticación rápida de <strong className="text-[#39FF14]">3 dígitos</strong> en su pantalla de la aplicación. El conductor requerirá este código para iniciar el viaje desde su teléfono, garantizando que abordó el vehículo correcto.
                     </p>
                   </div>
                 </motion.div>
@@ -1270,7 +1270,7 @@ export default function ClientOnboarding({ onComplete, onExitGuest }: ClientOnbo
                 </div>
                 <div>
                   <p className="text-xs font-bold text-white uppercase font-mono">Créditos de Bienvenida</p>
-                  <p className="text-[10px] text-gray-500 leading-tight">Adicionados de forma segura a su saldo táctico disponible.</p>
+                  <p className="text-[10px] text-gray-500 leading-tight">Adicionados de forma segura a su saldo disponible.</p>
                 </div>
               </div>
 
