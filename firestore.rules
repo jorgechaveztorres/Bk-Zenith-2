@@ -132,7 +132,7 @@ service cloud.firestore {
 
     // Driver Audits (Trazabilidad inmutable de conductores)
     match /driver_audits/{auditId} {
-      allow create: if isSignedIn();
+      allow create: if false; // Solo el backend registra auditorias confiables.
       allow read, list: if isAdmin();
       allow update, delete: if false; // Totalmente inmutable
     }
@@ -146,8 +146,8 @@ service cloud.firestore {
 
     // Assignments (Ofertas de Viaje de 15 Segundos)
     match /assignments/{assignmentId} {
-      allow read, list, create, update: if isSignedIn();
-      allow delete: if isAdmin();
+      allow read, list: if isSignedIn();
+      allow create, update, delete: if false; // Solo el backend puede crear o modificar asignaciones.
     }
 
     // Dispatch Logs (Auditoría de Despacho Inteligente)

@@ -6,7 +6,7 @@
 // ============================================================================
 
 import { Router } from 'express';
-import { requireAuth } from '../middlewares/auth.middleware';
+import { requireAuth, requireRole } from '../middlewares/auth.middleware';
 import { topupController } from '../controllers/topup.controller';
 import rateLimit from 'express-rate-limit';
 
@@ -18,17 +18,18 @@ const topupRateLimiter = rateLimit({
   message: { success: false, message: 'Demasiadas solicitudes de recarga. Intente nuevamente en unos minutos.' }
 });
 
-// Rutas del motorizado
+// Rutas de usuario autenticado. El backend deriva el UID del token verificado.
 router.post('/request', requireAuth, topupRateLimiter, topupController.createRequest);
 router.post('/receipt', requireAuth, topupRateLimiter, topupController.submitReceipt);
 router.get('/status/:topupId', requireAuth, topupController.getStatus);
 router.get('/my-history', requireAuth, topupController.getMyHistory);
 
-// Rutas del operador / conciliación
-router.get('/pending', requireAuth, topupController.getPending);
-router.post('/reconcile', requireAuth, topupController.reconcile);
-router.post('/approve-review', requireAuth, topupController.approveReview);
-router.post('/reject', requireAuth, topupController.reject);
-router.post('/credit', requireAuth, topupController.credit);
+// Operaciones financieras privilegiadas: autenticación Y autorización administrativa obligatorias.
+const requireFinanceAdmin = [requireAuth, requireRole(['admin'])] as const;
+router.get('/pending', ...requireFinanceAdmin, topupController.getPending);
+router.post('/reconcile', ...requireFinanceAdmin, topupController.reconcile);
+router.post('/approve-review', ...requireFinanceAdmin, topupController.approveReview);
+router.post('/reject', ...requireFinanceAdmin, topupController.reject);
+router.post('/credit', ...requireFinanceAdmin, topupController.credit);
 
 export default router;
