@@ -11,7 +11,7 @@ import DevObservabilityHUD from './components/DevObservabilityHUD';
 import AdminDashboard from './components/admin/AdminDashboard';
 import { LoggingService } from './services/LoggingService';
 import { ObservabilityService } from './services/ObservabilityService';
-import { LogOut, User as UserIcon, Car, Menu, Settings, Bell, Compass, Activity, ShieldAlert, FlaskConical, Shield, Zap, Play } from 'lucide-react';
+import { LogOut, User as UserIcon, Car, Menu, Settings, Bell, Compass, Activity, ShieldAlert, FlaskConical, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { auth, db } from './firebase/config';
 import { doc, getDoc, setDoc, collection, query, where, onSnapshot, limit, orderBy } from 'firebase/firestore';
