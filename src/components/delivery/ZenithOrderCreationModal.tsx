@@ -298,10 +298,10 @@ export default function ZenithOrderCreationModal({
             </div>
             <div>
               <h2 className="text-xl font-black uppercase italic tracking-tight text-white">
-                Nueva Operación de Entrega
+                Nuevo envío
               </h2>
               <p className="text-[10px] font-mono text-[#39FF14] uppercase tracking-widest font-bold">
-                ZÉNITH MVP V1.1 — PROTOCOLO MOTORIZADO
+                ZÉNITH — SERVICIO DE ENVÍOS
               </p>
             </div>
           </div>
