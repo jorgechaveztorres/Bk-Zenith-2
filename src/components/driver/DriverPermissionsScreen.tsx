@@ -122,7 +122,7 @@ export default function DriverPermissionsScreen({ onSuccess }: DriverPermissions
           Permisos de Operación
         </h2>
         <p className="text-xs text-gray-400 font-mono mt-1 uppercase tracking-wider">
-          Habilite el acceso para desplegar el mapa táctico y recibir notificaciones
+          Activa los permisos para ver el mapa y recibir notificaciones
         </p>
       </div>
 
