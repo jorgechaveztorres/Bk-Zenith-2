@@ -562,7 +562,7 @@ export default function ClientOnboarding({ onComplete, onExitGuest }: ClientOnbo
                   onClick={() => setIsDriverSignup(true)}
                   className="w-full py-4 bg-white/5 hover:bg-[#39FF14]/10 text-white hover:text-[#39FF14] border border-white/10 hover:border-[#39FF14]/30 font-black uppercase text-xs tracking-widest rounded-2xl transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  <span>POSTULAR COMO OPERADOR / CONDUCTOR PRO</span>
+                  <span>REGISTRARME COMO MOTORIZADO</span>
                   <ArrowRight size={16} />
                 </button>
 
@@ -719,7 +719,7 @@ export default function ClientOnboarding({ onComplete, onExitGuest }: ClientOnbo
                     className="mt-1 accent-[#39FF14]"
                   />
                   <label htmlFor="terms" className="text-[11px] text-gray-400 leading-normal">
-                    Acepto los <span className="text-[#39FF14] underline cursor-pointer">Términos de Servicio</span> y las <span className="text-[#39FF14] underline cursor-pointer">Políticas de Privacidad de Datos</span> del Protocolo Zénith.
+                    Acepto los <span className="text-[#39FF14] underline cursor-pointer">Términos del servicio</span> y las <span className="text-[#39FF14] underline cursor-pointer">Políticas de privacidad</span> de ZÉNITH.
                   </label>
                 </div>
 
