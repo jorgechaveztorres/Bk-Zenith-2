@@ -191,7 +191,7 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
       }
     } catch (err: any) {
       console.error("[Dashboard] Failed to change state:", err);
-      setErrorMessage('Error de conexión con el nodo de despacho.');
+      setErrorMessage('No se pudo conectar. Revisa tu conexión.');
     } finally {
       setLoading(false);
     }
@@ -275,7 +275,7 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
         <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-4 text-left flex items-start gap-3">
           <ShieldAlert className="text-red-400 shrink-0 mt-0.5 animate-bounce" size={16} />
           <div className="space-y-0.5">
-            <p className="text-[10px] font-mono text-red-400 font-bold uppercase tracking-wider">ERROR DE ADMISIÓN OPERATIVA</p>
+            <p className="text-[10px] font-mono text-red-400 font-bold uppercase tracking-wider">NO SE PUDO ACTIVAR EL SERVICIO</p>
             <p className="text-xs text-white/90">{errorMessage}</p>
           </div>
         </div>
@@ -396,7 +396,7 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
             <span className="text-2xl font-black text-white mt-1 block flex items-center gap-1">
               {rating.toFixed(1)} <Star className="text-[#39FF14] fill-[#39FF14]" size={18} />
             </span>
-            <span className="text-[9px] font-mono text-gray-400">Operador Certificado</span>
+            <span className="text-[9px] font-mono text-gray-400">Motorizado verificado</span>
           </div>
           <div className="w-10 h-10 bg-[#39FF14]/10 rounded-xl flex items-center justify-center">
             <Star className="text-[#39FF14]" size={20} />
@@ -406,7 +406,7 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
         {/* Vehicle Card */}
         <div className="bg-neutral-900 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
           <div>
-            <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest block">Unidad de Tránsito</span>
+            <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest block">Estado del viaje</span>
             <span className="text-sm font-black text-white mt-2 block uppercase truncate max-w-[150px]">
               {vehicle?.brand} {vehicle?.model}
             </span>
@@ -432,7 +432,7 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/5 pb-4">
                 <div>
                   <h4 className="text-md font-bold uppercase tracking-tight flex items-center gap-2 text-[#39FF14]">
-                    <Wallet size={18} /> Centro Financiero del Operador V2
+                    <Wallet size={18} /> Saldo y ganancias
                   </h4>
                   <p className="text-[10px] font-mono text-gray-400 mt-1 uppercase">
                     Administración de ingresos, comisiones aplicadas y solicitudes de liquidación bancaria directa.
@@ -482,7 +482,7 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
                   <p className="text-lg font-black text-white mt-1 font-mono">
                     S/ {(driverWallet?.accumulatedCommission || 0).toFixed(2)}
                   </p>
-                  <span className="text-[8px] font-mono text-[#39FF14] block mt-1">Comisión del 13% recolectada</span>
+                  <span className="text-[8px] font-mono text-[#39FF14] block mt-1">Comisión del 13% aplicada</span>
                 </div>
 
               </div>
@@ -597,7 +597,7 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
             )}
           </h3>
           <p className="text-xs text-gray-400 font-mono mt-1 uppercase">
-            {online ? 'Escaneando coordenadas de Trujillo para solicitudes activas.' : 'Inactivo. Presione para quedar disponible para recibir pasajeros.'}
+            {online ? 'Buscando viajes disponibles en Trujillo.' : 'Estás desconectado. Activa tu disponibilidad para recibir viajes.'}
           </p>
         </div>
 
