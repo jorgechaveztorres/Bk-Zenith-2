@@ -15,11 +15,11 @@ export default function ShareRide({ ride }: ShareRideProps) {
   const secureTrackUrl = `${appBaseUrl}/track/${ride.id}`;
 
   const etaMin = ride.duration ? Math.ceil(ride.duration) : 12;
-  const shareMessage = `🔒 [ZÉNITH TRACKING SECURE]
+  const shareMessage = `🔒 [SEGUIMIENTO DE VIAJE ZÉNITH]
 Sigue mi viaje en tiempo real de forma segura.
 📍 Origen: ${ride.origin.address}
 🏁 Destino: ${ride.destination.address}
-🚗 Operador: ${ride.driverName || 'Asignado por Red'}
+🚗 Operador: ${ride.driverName || 'Asignado por ZÉNITH'}
 ⏱️ ETA estimado: ${etaMin} min
 Estado: ${ride.status.toUpperCase()}
 Sigue el enlace: ${secureTrackUrl}`;
@@ -40,7 +40,7 @@ Sigue el enlace: ${secureTrackUrl}`;
       case 'whatsapp':
         return `https://api.whatsapp.com/send?text=${encodedMsg}`;
       case 'telegram':
-        return `https://t.me/share/url?url=${encodeURIComponent(secureTrackUrl)}&text=${encodeURIComponent('Sigue mi viaje en tiempo real mediante el protocolo de seguridad Zénith.')}`;
+        return `https://t.me/share/url?url=${encodeURIComponent(secureTrackUrl)}&text=${encodeURIComponent('Puedes ver mi viaje en tiempo real con ZÉNITH.')}`;
       case 'facebook':
         return `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(secureTrackUrl)}`;
       case 'sms':
@@ -61,7 +61,7 @@ Sigue el enlace: ${secureTrackUrl}`;
       </div>
 
       <p className="text-[10px] text-gray-400 leading-normal uppercase">
-        Autoriza la transmisión de coordenadas GPS y telemetría de ruta a tus contactos de confianza.
+        Permite compartir tu ubicación y ruta con tus contactos de confianza.
       </p>
 
       {/* Share Actions Grid */}
