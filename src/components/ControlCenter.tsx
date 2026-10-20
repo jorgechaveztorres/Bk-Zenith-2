@@ -128,7 +128,7 @@ const TRANSLATIONS = {
     notifToggle: 'Alertas en tiempo real',
     highPrecision: 'Alta Precisión',
     optimized: 'Optimizado',
-    avatarSelector: 'Seleccionar Avatar Táctico'
+    avatarSelector: 'Elegir avatar'
   },
   en: {
     title: 'Control Center',
@@ -723,7 +723,7 @@ export default function ControlCenter({ user, onUserUpdate }: ControlCenterProps
                   <div className="flex items-center justify-between border-b border-white/10 pb-4">
                     <h3 className="text-lg font-black uppercase italic tracking-tight flex items-center gap-2">
                       <Download className="text-[#39FF14]" size={18} />
-                      Cargar Depósito Táctico
+                      Agregar saldo
                     </h3>
                     <button onClick={() => setShowDepositModal(false)} className="text-gray-400 hover:text-white">✕</button>
                   </div>
