@@ -105,7 +105,7 @@ class _HomeMotorizadoScreenState extends State<HomeMotorizadoScreen> {
       backgroundColor: const Color(0xFF0D0D0D),
       appBar: AppBar(
         title: const Text(
-          'ZÉNITH - OPERADOR CONSOLE',
+          'ZÉNITH - PANEL DEL MOTORIZADO',
           style: TextStyle(
             fontWeight: FontWeight.bold,
             letterSpacing: 1.2,
@@ -150,7 +150,7 @@ class _HomeMotorizadoScreenState extends State<HomeMotorizadoScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Rol: Operador (Motorizado) • Calificación: ${widget.currentUser.rating}',
+                        'Rol: Motorizado • Calificación: ${widget.currentUser.rating}',
                         style: const TextStyle(
                           color: Colors.grey,
                           fontSize: 12,
@@ -179,7 +179,7 @@ class _HomeMotorizadoScreenState extends State<HomeMotorizadoScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'MISIÓN EN TRÁNSITO ASIGNADA',
+                        'VIAJE EN CURSO',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 14,
@@ -264,7 +264,7 @@ class _HomeMotorizadoScreenState extends State<HomeMotorizadoScreen> {
                                         foregroundColor: Colors.black,
                                       ),
                                       onPressed: () => widget.rideRepository.updateRideStatus(activeRide.id, 'in_progress'),
-                                      child: const Text('INICIAR TRÁNSITO', style: TextStyle(fontWeight: FontWeight.bold)),
+                                      child: const Text('INICIAR VIAJE', style: TextStyle(fontWeight: FontWeight.bold)),
                                     ),
                                   ),
                                 if (activeRide.status == 'in_progress')
@@ -275,7 +275,7 @@ class _HomeMotorizadoScreenState extends State<HomeMotorizadoScreen> {
                                         foregroundColor: Colors.black,
                                       ),
                                       onPressed: () => widget.rideRepository.updateRideStatus(activeRide.id, 'completed'),
-                                      child: const Text('ENTREGAR SERVICIO', style: TextStyle(fontWeight: FontWeight.bold)),
+                                      child: const Text('MARCAR COMO ENTREGADO', style: TextStyle(fontWeight: FontWeight.bold)),
                                     ),
                                   ),
                                 const SizedBox(width: 8),
@@ -307,7 +307,7 @@ class _HomeMotorizadoScreenState extends State<HomeMotorizadoScreen> {
                         Icon(Icons.radar, color: Color(0xFF39FF14), size: 16),
                         SizedBox(width: 8),
                         Text(
-                          'RADAR TÁCTICO: SOLICITUDES DISPONIBLES',
+                          'VIAJES DISPONIBLES',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 14,
@@ -336,7 +336,7 @@ class _HomeMotorizadoScreenState extends State<HomeMotorizadoScreen> {
                             ),
                             child: const Center(
                               child: Text(
-                                'Escaneando señales... No hay viajes pendientes de despacho.',
+                                'No hay viajes disponibles por ahora.',
                                 style: TextStyle(color: Colors.grey, fontSize: 12, fontFamily: 'monospace'),
                               ),
                             ),
