@@ -172,7 +172,7 @@ const TRANSLATIONS = {
     notifToggle: 'Real-time Alerts',
     highPrecision: 'High Precision',
     optimized: 'Optimized',
-    avatarSelector: 'Select Tactical Avatar'
+    avatarSelector: 'Choose avatar'
   }
 };
 
@@ -921,7 +921,7 @@ export default function ControlCenter({ user, onUserUpdate }: ControlCenterProps
           <div className="hud-card p-5 bg-black/40 border-white/5 space-y-4">
             <div className="flex items-center gap-2 border-b border-white/5 pb-2.5">
               <Filter size={14} className="text-[#39FF14]" />
-              <h4 className="text-xs uppercase font-mono font-black text-gray-300">Consola de Filtros Avanzados</h4>
+              <h4 className="text-xs uppercase font-mono font-black text-gray-300">Filtros</h4>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1336,7 +1336,7 @@ export default function ControlCenter({ user, onUserUpdate }: ControlCenterProps
                 <h3 className="text-2xl font-black uppercase italic tracking-tight">{fullName}</h3>
                 <p className="text-xs text-gray-500 font-mono">{user.email}</p>
                 <span className="inline-block text-[9px] font-mono bg-[#39FF14]/15 border border-[#39FF14]/30 text-[#39FF14] px-2.5 py-0.5 rounded-full uppercase tracking-wider font-black">
-                  {user.role === UserRole.DRIVER ? 'OPERADOR DE TRÁNSITO' : 'SOCIOPASAJERO VERIFICADO'}
+                  {user.role === UserRole.DRIVER ? 'MOTORIZADO' : 'CLIENTE VERIFICADO'}
                 </span>
               </div>
             </div>
