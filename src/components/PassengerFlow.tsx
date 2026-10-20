@@ -506,7 +506,7 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
             <div className="flex items-center gap-2 mb-1">
               <Radar size={16} className="text-[#39FF14] animate-pulse" />
               <h2 className="text-xl font-black uppercase italic tracking-tight">
-                {isMatched ? 'Tránsito Operativo' : 'Escaneando Operadores'}
+                {isMatched ? 'Viaje en curso' : 'Buscando motorizados'}
               </h2>
             </div>
             <p className="text-[10px] font-mono text-gray-400 uppercase tracking-widest truncate max-w-sm md:max-w-md">
@@ -551,7 +551,7 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-lg uppercase italic flex items-center gap-2">
               <Clock size={20} className="text-[#39FF14]" />
-              {isMatched ? 'Operador Asignado' : 'Ofertas Operativas'}
+              {isMatched ? 'Motorizado asignado' : 'Ofertas de viaje'}
             </h3>
             {!isMatched && (
               <span className="text-[10px] font-mono bg-[#39FF14]/10 text-[#39FF14] px-2 py-1 rounded border border-[#39FF14]/20 animate-pulse font-bold">
@@ -569,7 +569,7 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
                   className="bg-[#39FF14] text-black p-6 rounded-2xl flex items-center justify-between shadow-glow border border-white/10"
                 >
                   <div>
-                    <p className="text-[10px] font-mono uppercase font-black opacity-60 mb-1">Identidad del Operador</p>
+                    <p className="text-[10px] font-mono uppercase font-black opacity-60 mb-1">Datos del motorizado</p>
                     <h4 className="text-2xl font-black uppercase italic tracking-tight">{activeRide.driverName}</h4>
                     <div className="flex items-center gap-1.5 mt-1 opacity-70">
                       <Shield size={14} className="fill-black" />
@@ -599,7 +599,7 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
                   >
                     <div className="flex items-center gap-2">
                       <MessageSquare size={16} className="text-[#39FF14]" />
-                      <span className="uppercase text-[10px]">Coordinación de Operador en Vivo</span>
+                      <span className="uppercase text-[10px]">Seguimiento del motorizado</span>
                     </div>
                     <span className="text-[#39FF14] text-[10px] font-black uppercase">
                       {showChat ? 'Ocultar Chat' : 'Abrir Chat'}
@@ -628,7 +628,7 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
                       <div className="absolute inset-0 rounded-full border border-[#39FF14]/30 animate-ping"></div>
                     </div>
                     <div>
-                      <h4 className="text-sm font-black text-white uppercase italic tracking-tight">Escaner de Operadores Activo</h4>
+                      <h4 className="text-sm font-black text-white uppercase italic tracking-tight">Buscando motorizados</h4>
                       <p className="text-[10px] font-mono text-gray-500 uppercase tracking-widest leading-none mt-1">
                         Sello Tarifa: {activeRide.pricingSeal?.substring(0, 10)}
                       </p>
@@ -726,7 +726,7 @@ export default function PassengerFlow({ user }: PassengerFlowProps) {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full bg-gray-700" />
-                        <span className="text-gray-500">6. Operador en Camino...</span>
+                        <span className="text-gray-500">6. Motorizado en camino...</span>
                       </div>
                       <span className="text-gray-600">PENDIENTE</span>
                     </div>
@@ -1205,7 +1205,7 @@ Consulte su comprobante en la web oficial.`;
                 <span className="text-green-500 flex items-center gap-1"><Check size={10} /> COMPLETADO</span>
               </div>
               <div className="flex items-center justify-between">
-                <span>2. EMISIÓN DE VOUCHER PROTEGIDO</span>
+                <span>2. EMITIR COMPROBANTE</span>
                 <span className="text-green-500 flex items-center gap-1"><Check size={10} /> COMPLETADO</span>
               </div>
               <div className="flex items-center justify-between">
