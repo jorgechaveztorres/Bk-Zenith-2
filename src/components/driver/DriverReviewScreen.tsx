@@ -121,7 +121,7 @@ export default function DriverReviewScreen({ user, onBackToDocs, onRefresh }: Dr
           className="text-[10px] font-mono text-[#39FF14]/70 hover:text-[#39FF14] transition-colors uppercase tracking-widest flex items-center gap-1.5 justify-center mx-auto cursor-pointer"
         >
           <CheckCircle2 size={12} />
-          {adminMode ? 'Ocultar Consola de Simulación' : 'Consola de Control del Sandbox'}
+          {adminMode ? 'Ocultar simulación' : 'Panel de pruebas'}
         </button>
 
         {adminMode && (
