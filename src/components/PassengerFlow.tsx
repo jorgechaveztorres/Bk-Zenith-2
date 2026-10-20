@@ -1002,7 +1002,7 @@ SUBTOTAL: S/ ${((r.finalPrice || r.protectedPrice || 0) / 1.18).toFixed(2)}
 I.G.V. (18%): S/ ${((r.finalPrice || r.protectedPrice || 0) - ((r.finalPrice || r.protectedPrice || 0) / 1.18)).toFixed(2)}
 TOTAL NETO: S/ ${(r.finalPrice || r.protectedPrice || 0).toFixed(2)}
 =========================================
-SELLO DIGITAL TÁCTICO:
+CÓDIGO DE SEGURIDAD:
 ${r.pricingSeal || 'ZÉNITH-TRUST-SEAL-VALIDATED'}
 =========================================
 ¡Gracias por confiar en la Red Táctica Zénith!`;
@@ -1041,7 +1041,7 @@ SUBTOTAL: S/ ${((r.finalPrice || r.protectedPrice || 0) / 1.18).toFixed(2)}
 I.G.V. (18%): S/ ${((r.finalPrice || r.protectedPrice || 0) - ((r.finalPrice || r.protectedPrice || 0) / 1.18)).toFixed(2)}
 TOTAL NETO: S/ ${(r.finalPrice || r.protectedPrice || 0).toFixed(2)}
 =========================================
-SELLO DIGITAL TÁCTICO FACTURADOR:
+COMPROBANTE DIGITAL:
 ${r.pricingSeal || 'ZÉNITH-TRUST-SEAL-VALIDATED'}
 =========================================
 Representación impresa de la Factura Electrónica.
@@ -1082,8 +1082,8 @@ Consulte su comprobante en la web oficial.`;
             <div className="flex items-center gap-3">
               <Shield className="text-[#39FF14] animate-pulse" size={24} />
               <div>
-                <h3 className="text-xl font-black uppercase italic tracking-tight text-white">VOUCHER DE DESPLIEGUE OFICIAL</h3>
-                <p className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">ZÉNITH OPERATIONAL PROTOCOL</p>
+                <h3 className="text-xl font-black uppercase italic tracking-tight text-white">COMPROBANTE DEL VIAJE</h3>
+                <p className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">SERVICIO ZÉNITH</p>
               </div>
             </div>
             <div className="text-right">
