@@ -484,10 +484,10 @@ export default function App() {
                         <p className="text-gray-400 font-mono text-xs uppercase tracking-widest">
                           {currentUser.role === UserRole.PASSENGER 
                             ? (currentLang === 'es' 
-                                ? "Esperando despliegue de solicitud operativa" 
+                                ? "Esperando una solicitud de viaje" 
                                 : "Waiting for operational request deployment")
                             : (currentLang === 'es' 
-                                ? "Escaneando sector en busca de nodos de tránsito activos" 
+                                ? "Buscando viajes disponibles" 
                                 : "Scanning sector for active transit nodes")}
                         </p>
                       </div>
@@ -526,10 +526,10 @@ export default function App() {
         <footer className="py-10 text-center relative z-10">
           <div className="max-w-xs mx-auto mb-4 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
           <p className="text-[10px] font-mono text-gray-500 uppercase tracking-[0.5em] font-medium mb-1">
-            PROTOCOLO ZÉNITH v1.0.42
+            ZÉNITH
           </p>
           <p className="text-[8px] font-mono text-gray-600 uppercase tracking-widest">
-            {currentLang === 'es' ? 'Inteligencia Operativa Extremo a Extremo' : 'End-to-End Operational Intelligence'}
+            {currentLang === 'es' ? 'Todo lo que necesitas para tus viajes' : 'End-to-End Operational Intelligence'}
           </p>
         </footer>
 
