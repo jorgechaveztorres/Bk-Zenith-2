@@ -105,10 +105,10 @@ export default function DriverRegistrationScreen({ onSuccess }: DriverRegistrati
     <div className="bg-black/40 border border-white/5 backdrop-blur-md rounded-3xl p-6 sm:p-8 max-w-md mx-auto shadow-2xl">
       <div className="text-center mb-6">
         <h2 className="text-2xl font-black tracking-tight uppercase italic text-[#39FF14]">
-          {isLogin ? 'Ingresar a la Red' : 'Registro de Operador'}
+          {isLogin ? 'Iniciar sesión' : 'Registro de motorizado'}
         </h2>
         <p className="text-xs text-gray-400 font-mono mt-1 uppercase tracking-wider">
-          {isLogin ? 'Acceso al sistema táctico Zénith' : 'Primer registro de conductor profesional'}
+          {isLogin ? 'Inicia sesión en ZÉNITH' : 'Primer registro de conductor profesional'}
         </p>
       </div>
 
