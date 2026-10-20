@@ -103,7 +103,7 @@ export default function App() {
 
     const currentRolesEnabled = currentUser.rolesEnabled && currentUser.rolesEnabled.length > 0
       ? currentUser.rolesEnabled
-      : [currentUser.role || UserRole.PASSENGER];
+      : [resolveActiveRole(currentUser)];
     
     const updatedRolesEnabled = Array.from(new Set([...currentRolesEnabled, newRole]));
 
@@ -406,7 +406,7 @@ export default function App() {
                 )}
                 <ClientOnboarding onComplete={(user) => setCurrentUser(user)} />
               </motion.div>
-            ) : currentUser.role === UserRole.PASSENGER && !currentUser.onboardingComplete ? (
+            ) : resolveActiveRole(currentUser) === UserRole.PASSENGER && !currentUser.onboardingComplete ? (
               <motion.div
                 key="onboarding-incomplete"
                 initial={{ opacity: 0, scale: 0.95 }}
@@ -482,7 +482,7 @@ export default function App() {
                           {currentLang === 'es' ? 'Sistema Activo' : 'Active System'}
                         </h1>
                         <p className="text-gray-400 font-mono text-xs uppercase tracking-widest">
-                          {currentUser.role === UserRole.PASSENGER 
+                          {resolveActiveRole(currentUser) === UserRole.PASSENGER 
                             ? (currentLang === 'es' 
                                 ? "Esperando una solicitud de viaje" 
                                 : "Waiting for operational request deployment")
