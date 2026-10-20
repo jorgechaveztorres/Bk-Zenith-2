@@ -619,7 +619,7 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
         <div className="space-y-3">
           <h4 className="text-xs font-mono uppercase tracking-wider text-[#39FF14] flex items-center gap-2">
             <Compass size={14} className="animate-spin" />
-            <span>RADAR TÁCTICO DE TRUJILLO</span>
+            <span>VIAJES DISPONIBLES EN TRUJILLO</span>
           </h4>
           
           <AnimatePresence>
