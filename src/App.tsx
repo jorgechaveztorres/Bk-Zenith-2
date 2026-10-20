@@ -9,7 +9,6 @@ import PromptHelper from './components/PromptHelper';
 import SimulationLab from './lso/components/SimulationLab';
 import DevObservabilityHUD from './components/DevObservabilityHUD';
 import AdminDashboard from './components/admin/AdminDashboard';
-import OperationalHeartTestView from './components/test/OperationalHeartTestView';
 import { LoggingService } from './services/LoggingService';
 import { ObservabilityService } from './services/ObservabilityService';
 import { LogOut, User as UserIcon, Car, Menu, Settings, Bell, Compass, Activity, ShieldAlert, FlaskConical, Shield, Zap, Play } from 'lucide-react';
@@ -30,8 +29,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [showConfig, setShowConfig] = useState(false);
-  const [activeModule, setActiveModule] = useState<'service' | 'control_center' | 'lso' | 'admin' | 'heart_test'>('service');
-  const [showHeartTestModal, setShowHeartTestModal] = useState(false);
+  const [activeModule, setActiveModule] = useState<'service' | 'control_center' | 'lso' | 'admin'>('service');
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   // Performance render tracker
@@ -43,7 +41,7 @@ export default function App() {
     ObservabilityService.trackRenderTime(Math.max(1, duration));
   });
 
-  const handleModuleChange = (module: 'service' | 'control_center' | 'lso' | 'admin' | 'heart_test') => {
+  const handleModuleChange = (module: 'service' | 'control_center' | 'lso' | 'admin') => {
     ObservabilityService.startNavigation();
     LoggingService.info('NAVIGATION', `Navegación de módulo: ${activeModule.toUpperCase()} -> ${module.toUpperCase()}`);
     setActiveModule(module);
@@ -327,16 +325,6 @@ export default function App() {
             </div>
             
             <div className="flex items-center gap-3">
-              <button
-                onClick={() => setShowHeartTestModal(true)}
-                className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-[#39FF14]/15 hover:bg-[#39FF14]/25 text-[#39FF14] border border-[#39FF14]/50 rounded-xl text-xs font-mono font-black uppercase tracking-wider transition-all shadow-glow"
-                title="Prueba del Corazón Operativo: Fase 1"
-              >
-                <Zap size={15} className="animate-pulse text-[#39FF14]" />
-                <span className="hidden sm:inline">Prueba Corazón</span>
-                <span className="sm:hidden">Test Fase 1</span>
-              </button>
-
               {!currentUser && (
                 <button 
                   onClick={() => setShowConfig(!showConfig)}
@@ -394,34 +382,6 @@ export default function App() {
                 exit={{ opacity: 0, scale: 1.05 }}
                 className="py-6 sm:py-12"
               >
-                {/* Banner de Acceso Inmediato a la Prueba del Corazón (Sin Registro) */}
-                <div className="mb-8 p-5 rounded-2xl bg-gradient-to-r from-[#0a0a0a] via-[#39FF14]/10 to-[#0a0a0a] border border-[#39FF14]/40 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
-                  <div className="flex items-center gap-3.5">
-                    <div className="w-12 h-12 rounded-xl bg-[#39FF14]/20 border border-[#39FF14]/50 flex items-center justify-center text-[#39FF14] shrink-0 shadow-glow">
-                      <Zap size={24} className="animate-pulse" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-mono bg-[#39FF14] text-black font-black uppercase px-2 py-0.5 rounded">FASE 1</span>
-                        <span className="text-[11px] font-mono text-[#39FF14] uppercase tracking-wider font-bold">Prueba del Corazón Operativo</span>
-                      </div>
-                      <h3 className="text-base sm:text-lg font-black text-white uppercase italic tracking-tight mt-0.5">
-                        Pedido + Mapa + Geocodificación + Ruta + Motorizado + GPS Real
-                      </h3>
-                      <p className="text-xs font-mono text-gray-400 mt-1">
-                        Ejecuta la prueba de 20 puntos directamente en este dispositivo físico sin necesidad de registrarte.
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setShowHeartTestModal(true)}
-                    className="w-full sm:w-auto bg-[#39FF14] hover:bg-[#32e012] text-black px-6 py-3.5 rounded-xl font-mono text-xs font-black uppercase tracking-wider shadow-glow transition-all flex items-center justify-center gap-2 shrink-0"
-                  >
-                    <Play size={15} />
-                    <span>Iniciar Prueba Inmediata</span>
-                  </button>
-                </div>
-
                 {showConfig && (
                   <motion.div
                     initial={{ opacity: 0, y: -20 }}
@@ -485,17 +445,6 @@ export default function App() {
                     <FlaskConical size={14} />
                     {currentLang === 'es' ? 'Simulador LSO' : 'LSO Simulator'}
                   </button>
-                  <button
-                    onClick={() => handleModuleChange('heart_test')}
-                    className={`flex-1 min-w-[130px] py-3 text-xs font-mono uppercase font-black rounded-xl transition-all tracking-wider flex items-center justify-center gap-2 ${
-                      activeModule === 'heart_test'
-                        ? 'bg-[#39FF14] text-black shadow-glow'
-                        : 'text-[#39FF14] hover:bg-[#39FF14]/10 hover:text-[#39FF14] border border-[#39FF14]/30'
-                    }`}
-                  >
-                    <Zap size={14} className={activeModule === 'heart_test' ? '' : 'animate-pulse'} />
-                    {currentLang === 'es' ? 'Prueba Corazón' : 'Heart Test'}
-                  </button>
                   {/* Tab de Administración de Conductores */}
                   {(currentUser.isAdmin || currentUser.email === 'bkheelsec@gmail.com' || currentUser.role === 'admin') && (
                     <button
@@ -553,39 +502,13 @@ export default function App() {
                 ) : activeModule === 'control_center' ? (
                   <ControlCenter user={currentUser} onUserUpdate={(updated) => setCurrentUser(updated)} />
                 ) : activeModule === 'admin' ? (
-                  <AdminDashboard adminUser={currentUser} />
-                ) : activeModule === 'heart_test' ? (
-                  <OperationalHeartTestView 
-                    onReturnHome={() => handleModuleChange('service')} 
-                    onClose={() => handleModuleChange('service')} 
-                  />
-                ) : (
+                  <AdminDashboard adminUser={currentUser} />                ) : (
                   <SimulationLab />
                 )}
               </motion.div>
             )}
           </AnimatePresence>
         </main>
-  
-        {/* Modal de Acceso Directo a la Prueba del Corazón (Sin Registro o Flotante) */}
-        <AnimatePresence>
-          {showHeartTestModal && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-2xl p-2 sm:p-6 overflow-y-auto flex items-center justify-center"
-            >
-              <div className="w-full max-w-6xl my-auto">
-                <OperationalHeartTestView 
-                  onClose={() => setShowHeartTestModal(false)} 
-                  onReturnHome={() => setShowHeartTestModal(false)} 
-                />
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         {/* Footer */}
         <footer className="py-10 text-center relative z-10">
           <div className="max-w-xs mx-auto mb-4 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
