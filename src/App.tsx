@@ -199,7 +199,7 @@ export default function App() {
         if (resolveActiveRole(currentUser) === UserRole.PASSENGER) {
           switch (ride.status) {
             case RideStatus.SEARCHING_DRIVER:
-              triggerInAppAlert('BÚSQUEDA ACTIVA', 'Buscando un operador certificado para su tarifa protegida...', 'info');
+              triggerInAppAlert('BÚSQUEDA ACTIVA', 'Buscando un motorizado para tu viaje...', 'info');
               break;
             case RideStatus.DRIVER_ASSIGNED:
               triggerInAppAlert('OPERADOR ASIGNADO', `El operador ${ride.driverName || 'Zénith Pro'} ha confirmado el servicio.`, 'success');
@@ -211,7 +211,7 @@ export default function App() {
               triggerInAppAlert('CÓDIGO DE VALIDACIÓN', `Proporcione el OTP de 3 dígitos al operador para iniciar el viaje.`, 'info');
               break;
             case RideStatus.IN_PROGRESS:
-              triggerInAppAlert('VIAJE INICIADO', 'Protocolo de tránsito activo. Transmitiendo coordenadas GPS.', 'info');
+              triggerInAppAlert('VIAJE INICIADO', 'Viaje iniciado. Compartiendo la ubicación GPS.', 'info');
               break;
             case RideStatus.COMPLETED:
               triggerInAppAlert('VIAJE FINALIZADO', 'Ha llegado a su destino. Proceda a calificar al operador.', 'success');
@@ -255,7 +255,7 @@ export default function App() {
             const createdAtObj = rData.createdAt as { seconds?: number };
             const createdMs = createdAtObj?.seconds ? createdAtObj.seconds * 1000 : Date.now();
             if (Date.now() - createdMs < 120000) { // last 2 minutes
-              triggerInAppAlert('ALERTA RADAR', `Nuevo viaje disponible en tu zona. Tarifa protegida: S/ ${rData.protectedPrice}.`, 'alert');
+              triggerInAppAlert('NUEVO VIAJE', `Nuevo viaje disponible en tu zona. Tarifa protegida: S/ ${rData.protectedPrice}.`, 'alert');
             }
           }
         });
@@ -333,7 +333,7 @@ export default function App() {
               </div>
               <div className="flex flex-col -space-y-1">
                 <span className="font-black text-2xl tracking-[0.2em] uppercase italic">Zénith</span>
-                <span className="text-[10px] font-mono text-[#39FF14] tracking-widest uppercase opacity-70">Protocolo Operativo</span>
+                <span className="text-[10px] font-mono text-[#39FF14] tracking-widest uppercase opacity-70">Servicio de ZÉNITH</span>
               </div>
             </div>
             
@@ -488,7 +488,7 @@ export default function App() {
                                 : "Waiting for operational request deployment")
                             : (currentLang === 'es' 
                                 ? "Buscando viajes disponibles" 
-                                : "Scanning sector for active transit nodes")}
+                                : "Looking for available trips")}
                         </p>
                       </div>
                       <div className="hidden sm:flex items-center gap-4">
