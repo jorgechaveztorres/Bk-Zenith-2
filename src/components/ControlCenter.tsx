@@ -88,7 +88,7 @@ const FAVORITE_CATEGORIES = [
 const TRANSLATIONS = {
   es: {
     title: 'Centro de Control',
-    subtitle: 'Módulo de Diagnóstico, Wallet, Notificaciones y Configuración',
+    subtitle: 'Módulo de Historial, saldo, avisos y configuración',
     historyTab: 'Historial',
     profileTab: 'Perfil',
     settingsTab: 'Ajustes',
@@ -101,12 +101,12 @@ const TRANSLATIONS = {
     searchPlaceholder: 'Buscar dirección o persona...',
     noTrips: 'No se encontraron registros de viajes.',
     tripDetails: 'Detalle del Viaje',
-    route: 'Ruta Operativa',
+    route: 'Ruta del viaje',
     fare: 'Tarifa Acordada',
     status: 'Estado',
-    driver: 'Operador',
+    driver: 'Motorizado',
     passenger: 'Cliente',
-    date: 'Fecha de Despliegue',
+    date: 'Fecha del viaje',
     seal: 'Sello de Seguridad',
     rating: 'Calificación',
     feedback: 'Comentarios',
@@ -633,7 +633,7 @@ export default function ControlCenter({ user, onUserUpdate }: ControlCenterProps
               </div>
               <div className="flex justify-between items-start z-10">
                 <div className="space-y-0.5 text-left">
-                  <p className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">TACTICAL NETWORK</p>
+                  <p className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">RED ZÉNITH</p>
                   <p className="text-lg font-black uppercase italic tracking-tighter text-[#39FF14]">ZÉNITH PRO CARD</p>
                 </div>
                 <div className="w-10 h-7 bg-white/10 rounded-md border border-white/10 flex items-center justify-center">
