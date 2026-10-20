@@ -25,6 +25,14 @@ interface AppNotification {
   type: 'info' | 'success' | 'alert';
 }
 
+/** Normaliza el rol activo y admite los valores históricos en español. */
+function resolveActiveRole(user: Partial<User>): UserRole {
+  const candidate = user.activeRole ?? user.role;
+  return candidate === UserRole.DRIVER || candidate === 'MOTORIZADO'
+    ? UserRole.DRIVER
+    : UserRole.PASSENGER;
+}
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -88,9 +96,9 @@ export default function App() {
       return;
     }
 
-    const currentActive = currentUser.activeRole || currentUser.role;
-    const newRole = (currentActive === UserRole.DRIVER || currentActive === 'MOTORIZADO') 
-      ? UserRole.PASSENGER 
+    const currentActive = resolveActiveRole(currentUser);
+    const newRole = currentActive === UserRole.DRIVER
+      ? UserRole.PASSENGER
       : UserRole.DRIVER;
 
     const currentRolesEnabled = currentUser.rolesEnabled && currentUser.rolesEnabled.length > 0
@@ -120,6 +128,11 @@ export default function App() {
       );
     } catch (err) {
       console.error("Failed to switch role:", err);
+      triggerInAppAlert(
+        'NO SE PUDO CAMBIAR EL ROL',
+        'No se guardó el cambio de rol. Comprueba la conexión y los permisos de Firestore e inténtalo nuevamente.',
+        'alert'
+      );
     }
   };
 
@@ -156,7 +169,7 @@ export default function App() {
     // Tracker 1: Active ride status changes
     const ridesQuery = query(
       collection(db, 'rides'),
-      where(currentUser.role === UserRole.PASSENGER ? 'passengerId' : 'driverId', '==', currentUser.uid),
+      where(resolveActiveRole(currentUser) === UserRole.PASSENGER ? 'passengerId' : 'driverId', '==', currentUser.uid),
       where('status', 'in', [
         RideStatus.REQUESTED,
         RideStatus.SEARCHING_DRIVER,
@@ -183,7 +196,7 @@ export default function App() {
       
       // Notify only on true status transitions
       if (lastActiveRideId.current === ride.id && lastActiveRideStatus.current !== ride.status) {
-        if (currentUser.role === UserRole.PASSENGER) {
+        if (resolveActiveRole(currentUser) === UserRole.PASSENGER) {
           switch (ride.status) {
             case RideStatus.SEARCHING_DRIVER:
               triggerInAppAlert('BÚSQUEDA ACTIVA', 'Buscando un operador certificado para su tarifa protegida...', 'info');
@@ -224,7 +237,7 @@ export default function App() {
 
     // Tracker 2: Radar checks (for active drivers looking for unassigned rides)
     let unsubscribeRadar = () => {};
-    if (currentUser.role === UserRole.DRIVER) {
+    if (resolveActiveRole(currentUser) === UserRole.DRIVER) {
       const radarQuery = query(
         collection(db, 'rides'),
         where('status', '==', RideStatus.SEARCHING_DRIVER),
@@ -255,7 +268,7 @@ export default function App() {
       unsubscribeRides();
       unsubscribeRadar();
     };
-  }, [currentUser?.uid, currentUser?.role]);
+  }, [currentUser?.uid, currentUser?.role, currentUser?.activeRole]);
 
   if (loading) {
     return (
@@ -344,8 +357,8 @@ export default function App() {
                       </span>
                     )}
                     <span className="text-[9px] font-mono text-[#39FF14] uppercase tracking-widest leading-none">
-                      {(currentUser.activeRole === UserRole.DRIVER || currentUser.role === UserRole.DRIVER)
-                        ? (currentLang === 'es' ? 'MOTORIZADO' : 'OPERATOR') 
+                      {resolveActiveRole(currentUser) === UserRole.DRIVER
+                        ? (currentLang === 'es' ? 'MOTORIZADO' : 'OPERATOR')
                         : (currentLang === 'es' ? 'CLIENTE' : 'CLIENT')}
                     </span>
                   </div>
@@ -488,15 +501,15 @@ export default function App() {
                            </p>
                          </div>
                          <div className="w-14 h-14 rounded-2xl bg-[#39FF14]/10 border border-[#39FF14]/30 flex items-center justify-center">
-                           {currentUser.role === UserRole.PASSENGER ? <UserIcon className="text-[#39FF14]" /> : <Car className="text-[#39FF14]" />}
+                           {resolveActiveRole(currentUser) === UserRole.PASSENGER ? <UserIcon className="text-[#39FF14]" /> : <Car className="text-[#39FF14]" />}
                          </div>
                       </div>
                     </div>
       
-                    {currentUser.role === UserRole.PASSENGER ? (
-                      <PassengerFlow user={currentUser} />
+                    {resolveActiveRole(currentUser) === UserRole.PASSENGER ? (
+                      <PassengerFlow user={{ ...currentUser, role: UserRole.PASSENGER, activeRole: UserRole.PASSENGER }} />
                     ) : (
-                      <DriverFlow user={currentUser} />
+                      <DriverFlow user={{ ...currentUser, role: UserRole.DRIVER, activeRole: UserRole.DRIVER }} />
                     )}
                   </>
                 ) : activeModule === 'control_center' ? (
