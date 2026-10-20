@@ -75,7 +75,7 @@ export default function DriverDashboard({ user, onSelectRide, myAcceptedRide }: 
     return () => unsub();
   }, [user.uid]);
 
-  // Simulación de Hardware del Operador (Hardware Control Cockpit para pruebas)
+  // Simulación del teléfono del motorizado (solo para pruebas)
   const [simulatedBattery, setSimulatedBattery] = useState(85); // 85%
   const [simulatedGpsActive, setSimulatedGpsActive] = useState(true);
   const [simulatedInternet, setSimulatedInternet] = useState(true);
