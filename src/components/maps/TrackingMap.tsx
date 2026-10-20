@@ -141,7 +141,7 @@ function LiveRouteRenderer({
       map
     });
 
-    // D. Draw remaining pending path (Tactical Dashed/Dot pattern - blue/cyan)
+    // D. Draw remaining pending path (línea de ruta restante - blue/cyan)
     if (remainingPolyRef.current) remainingPolyRef.current.setMap(null);
     remainingPolyRef.current = new window.google.maps.Polyline({
       path: remainingSegment,
@@ -210,9 +210,9 @@ export default function TrackingMap({
     return (
       <div className="flex flex-col items-center justify-center bg-neutral-950 border border-white/5 rounded-2xl p-8 text-center" style={{ height }}>
         <Shield size={36} className="text-[#39FF14] mb-4 animate-pulse" />
-        <h2 className="text-sm font-bold font-mono text-white uppercase tracking-widest mb-2">Protocolo de Google Maps Requerido</h2>
+        <h2 className="text-sm font-bold font-mono text-white uppercase tracking-widest mb-2">Se necesita configurar Google Maps</h2>
         <p className="text-[10px] text-gray-500 max-w-sm font-mono uppercase tracking-widest leading-relaxed">
-          Sincronización en tiempo real deshabilitada. Configure su GOOGLE_MAPS_PLATFORM_KEY para desbloquear el monitor táctico de geolocalización.
+          El mapa en tiempo real no está disponible. Configura GOOGLE_MAPS_PLATFORM_KEY para mostrar la ubicación.
         </p>
       </div>
     );
@@ -266,11 +266,11 @@ export default function TrackingMap({
 
           {/* Marcador Oficial de Unidad ZÉNITH: ÁGUILA IMPERIAL + ZÉNITH */}
           {driverLoc && (
-            <AdvancedMarker position={driverLoc} title="Unidad Zénith en Tránsito">
+            <AdvancedMarker position={driverLoc} title="Motorizado en camino">
               <ZenithImperialEagleMarker
                 size={48}
                 heading={heading}
-                title="Unidad Zénith en Tránsito"
+                title="Motorizado en camino"
               />
             </AdvancedMarker>
           )}
@@ -281,13 +281,13 @@ export default function TrackingMap({
       <div className="absolute top-4 left-4 pointer-events-none space-y-1.5">
         <div className="bg-black/80 backdrop-blur-md px-3 py-1.5 border border-[#39FF14]/30 rounded-xl flex items-center gap-2">
           <div className="w-1.5 h-1.5 rounded-full bg-[#39FF14] animate-pulse"></div>
-          <span className="text-[9px] font-mono text-white font-bold uppercase tracking-wider">Telemetría Zénith GPS v2.4</span>
+          <span className="text-[9px] font-mono text-white font-bold uppercase tracking-wider">Ubicación GPS en tiempo real</span>
         </div>
       </div>
 
       <div className="absolute bottom-4 left-4 pointer-events-none">
         <div className="bg-black/80 backdrop-blur-md px-2.5 py-1.5 border border-white/5 rounded-lg flex items-center gap-2 text-[8px] font-mono text-gray-400 uppercase">
-          <Maximize2 size={10} className="text-[#39FF14]" /> Centrado Autónomo: Activo
+          <Maximize2 size={10} className="text-[#39FF14]" /> Centrado automático: activado
         </div>
       </div>
     </div>
