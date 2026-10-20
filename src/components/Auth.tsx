@@ -106,7 +106,7 @@ export default function Auth({ onUserChange }: AuthProps) {
           <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mb-6 group-hover:bg-[#39FF14]/20 group-hover:text-[#39FF14] transition-all">
             <Car size={32} />
           </div>
-          <h3 className="text-xl font-black uppercase tracking-tight mb-2 italic">Operador</h3>
+          <h3 className="text-xl font-black uppercase tracking-tight mb-2 italic">Motorizado</h3>
           <p className="text-gray-500 text-xs font-mono uppercase tracking-widest leading-relaxed">
             Acepta operaciones y optimiza nodos de tránsito urbano
           </p>
