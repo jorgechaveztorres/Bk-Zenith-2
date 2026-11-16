@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
@@ -29,9 +31,26 @@ const ACCESS_TTL = '1h';
 const REFRESH_TTL_DAYS = 30;
 const MIN_PASSWORD = 6;
 
+/**
+ * Clave que firma las sesiones. Dos formas:
+ *  - JWT_SECRET (variable de entorno), o
+ *  - JWT_SECRET_FILE: ruta a un archivo privado. Si no existe, el servidor lo crea
+ *    una sola vez con 64 bytes aleatorios (permiso 600). Así nadie tiene que inventarla ni verla.
+ */
+let cachedSecret: string | null = null;
 const jwtSecret = (): string => {
-  const s = process.env.JWT_SECRET;
-  if (!s || s.length < 32) throw new Error('JWT_SECRET debe existir y tener al menos 32 caracteres.');
+  if (cachedSecret) return cachedSecret;
+  let s = process.env.JWT_SECRET;
+  const file = process.env.JWT_SECRET_FILE;
+  if (!s && file) {
+    if (!fs.existsSync(file)) {
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(file, crypto.randomBytes(64).toString('base64url'), { mode: 0o600, flag: 'wx' });
+    }
+    s = fs.readFileSync(file, 'utf8').trim();
+  }
+  if (!s || s.length < 32) throw new Error('Falta JWT_SECRET (o JWT_SECRET_FILE) de al menos 32 caracteres.');
+  cachedSecret = s;
   return s;
 };
 
