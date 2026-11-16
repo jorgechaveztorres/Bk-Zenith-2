@@ -10,7 +10,8 @@ export interface SmsSender {
 
 class ConsoleSms implements SmsSender {
   async send(phoneE164: string, text: string) {
-    console.log(`[SMS-PRUEBA] a ${phoneE164}: ${text}`);
+    // console.error: en cPanel (LiteSpeed) solo stderr.log queda guardado en disco.
+    console.error(`[SMS-PRUEBA] a ${phoneE164}: ${text}`);
   }
 }
 
