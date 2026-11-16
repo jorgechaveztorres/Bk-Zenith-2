@@ -2986,7 +2986,7 @@ var withTransaction = async (fn) => {
 // server/services/sms.service.ts
 var ConsoleSms = class {
   async send(phoneE164, text) {
-    console.log(`[SMS-PRUEBA] a ${phoneE164}: ${text}`);
+    console.error(`[SMS-PRUEBA] a ${phoneE164}: ${text}`);
   }
 };
 var sender = null;
