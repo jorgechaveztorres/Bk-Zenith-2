@@ -3,29 +3,49 @@ import { getFirestore, Firestore } from 'firebase-admin/firestore';
 import { getAuth, Auth } from 'firebase-admin/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-let adminApp: App;
+/**
+ * Firebase queda OPCIONAL durante la migración a MySQL.
+ * - FIREBASE_DISABLED=true  -> no se inicializa (producción en cPanel).
+ * - Si falla la inicialización, el servidor igual arranca; solo los módulos
+ *   que aún dependen de Firebase responden con error al usarse.
+ * Antes, un fallo aquí tumbaba TODO el servidor al arrancar.
+ */
+const FIREBASE_OFF_MESSAGE = 'Este módulo todavía usa Firebase y está desactivado mientras se migra a MySQL.';
 
-try {
-  if (getApps().length === 0) {
-    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+const unavailable = <T extends object>(name: string): T =>
+  new Proxy({} as T, {
+    get(_target, prop) {
+      if (prop === 'then') return undefined; // evita que se trate como promesa
+      throw new Error(`${FIREBASE_OFF_MESSAGE} (${name}.${String(prop)})`);
+    },
+  });
+
+let adminApp: App | undefined;
+
+if (process.env.FIREBASE_DISABLED !== 'true') {
+  try {
+    if (getApps().length > 0) {
+      adminApp = getApps()[0];
+    } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
       adminApp = initializeApp({
         credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)),
-        projectId: firebaseConfig.projectId
+        projectId: firebaseConfig.projectId,
       });
     } else {
-      adminApp = initializeApp({
-        projectId: firebaseConfig.projectId
-      });
+      adminApp = initializeApp({ projectId: firebaseConfig.projectId });
     }
-  } else {
-    adminApp = getApps()[0];
+  } catch (e: unknown) {
+    console.error('[FIREBASE_ADMIN_INIT_ERROR] Firebase desactivado:', (e as Error).message);
+    adminApp = undefined;
   }
-} catch (e: any) {
-  console.error('[FIREBASE_ADMIN_INIT_ERROR] Error inicializando Firebase Admin:', e.message);
-  adminApp = getApps()[0];
+} else {
+  console.log('[FIREBASE] Desactivado por FIREBASE_DISABLED=true (modo MySQL).');
 }
 
-// Inicializar Firestore apuntando explícitamente a la base de datos nombrada y Auth al proyecto configurado
-export const db: Firestore = getFirestore(adminApp, firebaseConfig.firestoreDatabaseId);
-export const auth: Auth = getAuth(adminApp);
+export const firebaseEnabled = adminApp !== undefined;
 
+export const db: Firestore = adminApp
+  ? getFirestore(adminApp, firebaseConfig.firestoreDatabaseId)
+  : unavailable<Firestore>('db');
+
+export const auth: Auth = adminApp ? getAuth(adminApp) : unavailable<Auth>('auth');

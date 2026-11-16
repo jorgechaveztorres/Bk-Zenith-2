@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { createApp } from "./server/app";
 
 async function startServer() {
@@ -9,6 +8,8 @@ async function startServer() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    // Import dinámico: en producción (cPanel) no hace falta instalar vite.
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -17,7 +18,12 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*all', (req, res) => {
+    // Express 4: '*' (el patrón '*all' era de Express 5 y nunca coincidía).
+    // Las rutas /api/ desconocidas responden 404 en JSON, no la página web.
+    app.get('*', (req, res) => {
+      if (req.path.includes('/api/')) {
+        return res.status(404).json({ success: false, message: 'Ruta no encontrada.' });
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
