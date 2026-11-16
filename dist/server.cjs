@@ -297,12 +297,348 @@ var settlement_routes_default = router2;
 // server/routes/ride.routes.ts
 var import_express3 = require("express");
 
+// server/services/auth.service.ts
+var import_crypto = __toESM(require("crypto"), 1);
+var import_fs = __toESM(require("fs"), 1);
+var import_path = __toESM(require("path"), 1);
+var import_bcryptjs = __toESM(require("bcryptjs"), 1);
+var import_jsonwebtoken = __toESM(require("jsonwebtoken"), 1);
+
+// server/config/mysql.ts
+var import_promise = __toESM(require("mysql2/promise"), 1);
+var pool = null;
+var getPool = () => {
+  if (pool) return pool;
+  const { DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME } = process.env;
+  if (!DB_USER || !DB_PASSWORD || !DB_NAME) {
+    throw new Error("Faltan variables DB_USER, DB_PASSWORD o DB_NAME para conectar a MySQL.");
+  }
+  pool = import_promise.default.createPool({
+    host: DB_HOST || "localhost",
+    port: DB_PORT ? parseInt(DB_PORT, 10) : 3306,
+    user: DB_USER,
+    password: DB_PASSWORD,
+    database: DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 8,
+    timezone: "Z",
+    charset: "utf8mb4",
+    dateStrings: false
+  });
+  pool.on("connection", (conn) => {
+    conn.query("SET time_zone = '+00:00'");
+  });
+  return pool;
+};
+var withTransaction = async (fn) => {
+  const conn = await getPool().getConnection();
+  try {
+    await conn.beginTransaction();
+    const result = await fn(conn);
+    await conn.commit();
+    return result;
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
+// server/services/sms.service.ts
+var ConsoleSms = class {
+  async send(phoneE164, text) {
+    console.error(`[SMS-PRUEBA] a ${phoneE164}: ${text}`);
+  }
+};
+var sender = null;
+var getSmsSender = () => {
+  if (sender) return sender;
+  const provider = (process.env.SMS_PROVIDER || "console").toLowerCase();
+  switch (provider) {
+    case "console":
+      sender = new ConsoleSms();
+      break;
+    default:
+      throw new Error(`Proveedor de SMS no soportado: ${provider}`);
+  }
+  return sender;
+};
+
+// server/services/auth.service.ts
+var AuthError = class extends Error {
+  constructor(statusCode, message) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+};
+var OTP_TTL_MIN = 5;
+var OTP_MAX_ATTEMPTS = 5;
+var OTP_MAX_PER_15MIN = 3;
+var OTP_MAX_PER_DAY = 6;
+var ACCESS_TTL = "1h";
+var REFRESH_TTL_DAYS = 30;
+var MIN_PASSWORD = 6;
+var cachedSecret = null;
+var jwtSecret = () => {
+  if (cachedSecret) return cachedSecret;
+  let s = process.env.JWT_SECRET;
+  const file = process.env.JWT_SECRET_FILE;
+  if (!s && file) {
+    if (!import_fs.default.existsSync(file)) {
+      import_fs.default.mkdirSync(import_path.default.dirname(file), { recursive: true, mode: 448 });
+      import_fs.default.writeFileSync(file, import_crypto.default.randomBytes(64).toString("base64url"), { mode: 384, flag: "wx" });
+    }
+    s = import_fs.default.readFileSync(file, "utf8").trim();
+  }
+  if (!s || s.length < 32) throw new Error("Falta JWT_SECRET (o JWT_SECRET_FILE) de al menos 32 caracteres.");
+  cachedSecret = s;
+  return s;
+};
+var sha256 = (v) => import_crypto.default.createHash("sha256").update(v).digest("hex");
+var hashOtp = (phone, purpose, code) => sha256(`${jwtSecret()}|${phone}|${purpose}|${code}`);
+var normalizePhone = (raw) => {
+  if (typeof raw !== "string") throw new AuthError(400, "N\xFAmero de celular inv\xE1lido.");
+  let d = raw.replace(/\D/g, "");
+  if (d.length === 11 && d.startsWith("51")) d = d.slice(2);
+  if (!/^9\d{8}$/.test(d)) throw new AuthError(400, "El celular debe tener 9 d\xEDgitos y empezar con 9.");
+  return `+51${d}`;
+};
+var validatePassword = (p) => {
+  if (typeof p !== "string" || p.length < MIN_PASSWORD) {
+    throw new AuthError(400, `La clave debe tener al menos ${MIN_PASSWORD} caracteres.`);
+  }
+  if (p.length > 72) throw new AuthError(400, "La clave es demasiado larga.");
+  return p;
+};
+var validateName = (n) => {
+  if (typeof n !== "string" || n.trim().length < 3) throw new AuthError(400, "Escribe tu nombre completo.");
+  return n.trim().slice(0, 150);
+};
+var validateRole = (r) => {
+  if (r === "driver" || r === "MOTORIZADO") return "driver";
+  if (r === "passenger" || r === "CLIENTE" || r === void 0) return "passenger";
+  throw new AuthError(400, "Rol inv\xE1lido.");
+};
+var toPublic = (u) => ({
+  id: u.id,
+  fullName: u.full_name,
+  phone: u.phone,
+  role: u.role,
+  isAdmin: u.is_admin === 1,
+  kycStatus: u.kyc_status
+});
+var issueOtp = async (phone, purpose) => {
+  const pool2 = getPool();
+  const [rows] = await pool2.query(
+    `SELECT
+       SUM(created_at > NOW(3) - INTERVAL 15 MINUTE) AS last15,
+       COUNT(*) AS lastDay
+     FROM otp_codes WHERE phone = ? AND created_at > NOW(3) - INTERVAL 1 DAY`,
+    [phone]
+  );
+  const last15 = Number(rows[0]?.last15 || 0);
+  const lastDay = Number(rows[0]?.lastDay || 0);
+  if (last15 >= OTP_MAX_PER_15MIN || lastDay >= OTP_MAX_PER_DAY) {
+    throw new AuthError(429, "Pediste muchos c\xF3digos. Espera unos minutos e int\xE9ntalo de nuevo.");
+  }
+  const code = import_crypto.default.randomInt(0, 1e6).toString().padStart(6, "0");
+  await pool2.execute(
+    `INSERT INTO otp_codes (phone, purpose, code_hash, expires_at)
+     VALUES (?, ?, ?, NOW(3) + INTERVAL ${OTP_TTL_MIN} MINUTE)`,
+    [phone, purpose, hashOtp(phone, purpose, code)]
+  );
+  await getSmsSender().send(phone, `Zenith: tu codigo es ${code}. Vence en ${OTP_TTL_MIN} minutos. No lo compartas.`);
+};
+var consumeOtp = async (conn, phone, purpose, code) => {
+  if (typeof code !== "string" || !/^\d{6}$/.test(code)) throw new AuthError(400, "El c\xF3digo tiene 6 n\xFAmeros.");
+  const [rows] = await conn.query(
+    `SELECT id, code_hash, attempts FROM otp_codes
+     WHERE phone = ? AND purpose = ? AND used_at IS NULL AND expires_at > NOW(3)
+     ORDER BY id DESC LIMIT 1 FOR UPDATE`,
+    [phone, purpose]
+  );
+  const otp = rows[0];
+  if (!otp) throw new AuthError(400, "El c\xF3digo venci\xF3 o no existe. Pide uno nuevo.");
+  if (Number(otp.attempts) >= OTP_MAX_ATTEMPTS) throw new AuthError(429, "Demasiados intentos. Pide un c\xF3digo nuevo.");
+  const expected = Buffer.from(String(otp.code_hash), "hex");
+  const given = Buffer.from(hashOtp(phone, purpose, code), "hex");
+  if (!import_crypto.default.timingSafeEqual(expected, given)) {
+    await conn.execute("UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?", [otp.id]);
+    throw new AuthError(400, "C\xF3digo incorrecto.");
+  }
+  await conn.execute("UPDATE otp_codes SET used_at = NOW(3) WHERE id = ?", [otp.id]);
+};
+var createSession = async (conn, user, deviceInfo) => {
+  const claims = { sub: user.id, role: user.role, adm: user.is_admin === 1 };
+  const accessToken = import_jsonwebtoken.default.sign(claims, jwtSecret(), { expiresIn: ACCESS_TTL, issuer: "zenith" });
+  const refreshToken = import_crypto.default.randomBytes(48).toString("base64url");
+  const exec = conn ?? getPool();
+  await exec.execute(
+    `INSERT INTO refresh_tokens (user_id, token_hash, device_info, expires_at)
+     VALUES (?, ?, ?, NOW(3) + INTERVAL ${REFRESH_TTL_DAYS} DAY)`,
+    [user.id, sha256(refreshToken), deviceInfo ? deviceInfo.slice(0, 255) : null]
+  );
+  return { accessToken, refreshToken, expiresIn: 3600, user: toPublic(user) };
+};
+var verifyAccessToken = (token) => {
+  try {
+    const decoded = import_jsonwebtoken.default.verify(token, jwtSecret(), { issuer: "zenith" });
+    if (typeof decoded === "string" || typeof decoded.sub !== "string") throw new Error("token");
+    return { sub: decoded.sub, role: decoded.role, adm: decoded.adm === true };
+  } catch {
+    throw new AuthError(401, "Sesi\xF3n vencida. Vuelve a entrar.");
+  }
+};
+var findByPhone = async (exec, phone, lock = false) => {
+  const [rows] = await exec.query(
+    `SELECT id, full_name, phone, password_hash, role, is_admin, is_blocked, phone_verified, kyc_status
+     FROM users WHERE phone = ? LIMIT 1${lock ? " FOR UPDATE" : ""}`,
+    [phone]
+  );
+  return rows[0];
+};
+var startRegistration = async (rawPhone) => {
+  const phone = normalizePhone(rawPhone);
+  const existing = await findByPhone(getPool(), phone);
+  if (existing) throw new AuthError(409, "Este celular ya tiene cuenta. Entra con tu clave.");
+  await issueOtp(phone, "VERIFY_PHONE");
+};
+var completeRegistration = async (input) => {
+  const phone = normalizePhone(input.phone);
+  const password = validatePassword(input.password);
+  const fullName = validateName(input.fullName);
+  const role = validateRole(input.role);
+  const passwordHash = await import_bcryptjs.default.hash(password, 10);
+  return withTransaction(async (conn) => {
+    await consumeOtp(conn, phone, "VERIFY_PHONE", input.code);
+    if (await findByPhone(conn, phone, true)) throw new AuthError(409, "Este celular ya tiene cuenta.");
+    const id = import_crypto.default.randomUUID();
+    const roleLabel = role === "driver" ? "MOTORIZADO" : "CLIENTE";
+    await conn.execute(
+      `INSERT INTO users (id, full_name, phone, password_hash, role, roles_enabled, active_role, phone_verified)
+       VALUES (?, ?, ?, ?, ?, JSON_ARRAY(?), ?, 1)`,
+      [id, fullName, phone, passwordHash, role, roleLabel, roleLabel]
+    );
+    if (role === "driver") {
+      await conn.execute("INSERT INTO driver_profiles (user_id) VALUES (?)", [id]);
+      await conn.execute("INSERT INTO wallets (driver_id) VALUES (?)", [id]);
+    }
+    await conn.execute(
+      `INSERT INTO audit_logs (actor_id, actor_role, action, target_type, target_id) VALUES (?, ?, 'USER_REGISTERED', 'user', ?)`,
+      [id, role, id]
+    );
+    const user = await findByPhone(conn, phone);
+    if (!user) throw new AuthError(500, "No se pudo crear la cuenta.");
+    return createSession(conn, user, input.deviceInfo);
+  });
+};
+var login = async (input) => {
+  const phone = normalizePhone(input.phone);
+  if (typeof input.password !== "string") throw new AuthError(400, "Escribe tu clave.");
+  const user = await findByPhone(getPool(), phone);
+  const ok = user?.password_hash ? await import_bcryptjs.default.compare(input.password, user.password_hash) : false;
+  if (!user || !ok) throw new AuthError(401, "Celular o clave incorrectos.");
+  if (user.is_blocked === 1) throw new AuthError(403, "Tu cuenta est\xE1 bloqueada. Escribe a soporte.");
+  return createSession(null, user, input.deviceInfo);
+};
+var refreshSession = async (rawToken) => {
+  if (typeof rawToken !== "string" || rawToken.length < 20) throw new AuthError(401, "Sesi\xF3n inv\xE1lida.");
+  const [reused] = await getPool().query(
+    "SELECT user_id FROM refresh_tokens WHERE token_hash = ? AND revoked_at IS NOT NULL",
+    [sha256(rawToken)]
+  );
+  if (reused[0]) {
+    await getPool().execute(
+      "UPDATE refresh_tokens SET revoked_at = NOW(3) WHERE user_id = ? AND revoked_at IS NULL",
+      [reused[0].user_id]
+    );
+    throw new AuthError(401, "Sesi\xF3n cerrada por seguridad. Vuelve a entrar.");
+  }
+  return withTransaction(async (conn) => {
+    const [rows] = await conn.query(
+      `SELECT id, user_id, device_info, revoked_at, expires_at > NOW(3) AS alive
+       FROM refresh_tokens WHERE token_hash = ? FOR UPDATE`,
+      [sha256(rawToken)]
+    );
+    const rt = rows[0];
+    if (!rt) throw new AuthError(401, "Sesi\xF3n inv\xE1lida.");
+    if (rt.revoked_at) throw new AuthError(401, "Sesi\xF3n cerrada por seguridad. Vuelve a entrar.");
+    if (!Number(rt.alive)) throw new AuthError(401, "Sesi\xF3n vencida. Vuelve a entrar.");
+    await conn.execute("UPDATE refresh_tokens SET revoked_at = NOW(3) WHERE id = ?", [rt.id]);
+    const [urows] = await conn.query(
+      `SELECT id, full_name, phone, password_hash, role, is_admin, is_blocked, phone_verified, kyc_status
+       FROM users WHERE id = ?`,
+      [rt.user_id]
+    );
+    const user = urows[0];
+    if (!user || user.is_blocked === 1) throw new AuthError(403, "Cuenta no disponible.");
+    return createSession(conn, user, rt.device_info ?? void 0);
+  });
+};
+var logout = async (rawToken) => {
+  if (typeof rawToken !== "string") return;
+  await getPool().execute("UPDATE refresh_tokens SET revoked_at = NOW(3) WHERE token_hash = ? AND revoked_at IS NULL", [sha256(rawToken)]);
+};
+var startPasswordReset = async (rawPhone) => {
+  const phone = normalizePhone(rawPhone);
+  const user = await findByPhone(getPool(), phone);
+  if (!user || user.is_blocked === 1) return;
+  await issueOtp(phone, "RESET_PASSWORD");
+};
+var completePasswordReset = async (input) => {
+  const phone = normalizePhone(input.phone);
+  const password = validatePassword(input.newPassword);
+  const passwordHash = await import_bcryptjs.default.hash(password, 10);
+  return withTransaction(async (conn) => {
+    await consumeOtp(conn, phone, "RESET_PASSWORD", input.code);
+    const user = await findByPhone(conn, phone, true);
+    if (!user) throw new AuthError(400, "C\xF3digo incorrecto.");
+    await conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", [passwordHash, user.id]);
+    await conn.execute("UPDATE refresh_tokens SET revoked_at = NOW(3) WHERE user_id = ? AND revoked_at IS NULL", [user.id]);
+    await conn.execute(
+      `INSERT INTO audit_logs (actor_id, actor_role, action, target_type, target_id) VALUES (?, ?, 'PASSWORD_RESET', 'user', ?)`,
+      [user.id, user.role, user.id]
+    );
+    return createSession(conn, user, input.deviceInfo);
+  });
+};
+var getUserById = async (id) => {
+  const [rows] = await getPool().query(
+    `SELECT id, full_name, phone, password_hash, role, is_admin, is_blocked, phone_verified, kyc_status
+     FROM users WHERE id = ?`,
+    [id]
+  );
+  return rows[0] ? toPublic(rows[0]) : null;
+};
+
+// server/middlewares/session.middleware.ts
+var requireSession = (req, res, next) => {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith("Bearer ")) {
+    return res.status(401).json({ success: false, message: "Debes iniciar sesi\xF3n." });
+  }
+  try {
+    req.session = verifyAccessToken(header.slice(7));
+    next();
+  } catch (err) {
+    const status = err instanceof AuthError ? err.statusCode : 401;
+    return res.status(status).json({ success: false, message: err.message });
+  }
+};
+var requireAppRole = (roles) => (req, res, next) => {
+  const s = req.session;
+  if (!s) return res.status(401).json({ success: false, message: "Debes iniciar sesi\xF3n." });
+  const allowed = s.adm && roles.includes("admin") || roles.includes(s.role);
+  if (!allowed) return res.status(403).json({ success: false, message: "No tienes permiso para esto." });
+  next();
+};
+
 // server/services/ride.service.ts
-var import_firestore5 = require("firebase-admin/firestore");
-var import_crypto2 = __toESM(require("crypto"), 1);
+var import_crypto3 = __toESM(require("crypto"), 1);
 
 // server/services/pricing.service.ts
-var import_crypto = __toESM(require("crypto"), 1);
+var import_crypto2 = __toESM(require("crypto"), 1);
 
 // server/services/routes.service.ts
 var GoogleRoutesProvider = class {
@@ -624,36 +960,6 @@ var CityCatalog = new CityCatalogRegistry();
 
 // server/services/geo.service.ts
 var MAX_DRIVER_STALE_MS = 10 * 60 * 1e3;
-function isDriverFresh(driver, nowMs = Date.now()) {
-  if (driver.isStale === true) {
-    return false;
-  }
-  let lastUpdateMs = null;
-  if (driver.lastActive) {
-    if (typeof driver.lastActive.toMillis === "function") {
-      lastUpdateMs = driver.lastActive.toMillis();
-    } else if (typeof driver.lastActive === "number") {
-      lastUpdateMs = driver.lastActive;
-    } else if (driver.lastActive instanceof Date) {
-      lastUpdateMs = driver.lastActive.getTime();
-    } else if (typeof driver.lastActive === "string") {
-      const parsed = Date.parse(driver.lastActive);
-      if (!isNaN(parsed)) lastUpdateMs = parsed;
-    }
-  }
-  if (lastUpdateMs === null && driver.driverProfile?.gps?.updatedAt) {
-    const parsed = Date.parse(driver.driverProfile.gps.updatedAt);
-    if (!isNaN(parsed)) lastUpdateMs = parsed;
-  }
-  if (lastUpdateMs === null && driver.driverProfile?.lastConnection) {
-    const parsed = Date.parse(driver.driverProfile.lastConnection);
-    if (!isNaN(parsed)) lastUpdateMs = parsed;
-  }
-  if (lastUpdateMs === null) {
-    return true;
-  }
-  return nowMs - lastUpdateMs <= MAX_DRIVER_STALE_MS;
-}
 function resolveCityFromCoordinates(lat, lng, address) {
   const matchBox = CityCatalog.findByBoundingBox(lat, lng);
   if (matchBox) {
@@ -746,121 +1052,6 @@ function resolveGeoMarketZone(lat, lng, address) {
     name: `Zona Operacional ${city} (${latBin}, ${lngBin})`,
     city,
     gridKey: `${latBin}:${lngBin}`
-  };
-}
-function filterLocalDemandAndSupply(originLat, originLng, originAddress, rawRides, rawDrivers, nowMs = Date.now()) {
-  const cityMeta = resolveCityFromCoordinates(originLat, originLng, originAddress);
-  const marketZone = resolveGeoMarketZone(originLat, originLng, originAddress);
-  const city = cityMeta.city;
-  const maxRadiusKm = cityMeta.operationalRadiusKm;
-  const ACTIVE_DEMAND_STATUSES = ["SEARCHING_DRIVER", "REQUESTED", "SEARCHING", "pending"];
-  const localRideIds = [];
-  for (const ride of rawRides) {
-    if (!ride.status || !ACTIVE_DEMAND_STATUSES.includes(ride.status)) {
-      continue;
-    }
-    const rLat = ride.origin?.lat;
-    const rLng = ride.origin?.lng;
-    if (typeof rLat === "number" && typeof rLng === "number") {
-      const dist = getGeodesicDistance(originLat, originLng, rLat, rLng);
-      if (dist <= maxRadiusKm) {
-        localRideIds.push(ride.id || `ride_${localRideIds.length}`);
-      }
-    } else if (cityMeta.isKnownCity && ride.city && ride.city.toLowerCase() === city.toLowerCase()) {
-      localRideIds.push(ride.id || `ride_${localRideIds.length}`);
-    }
-  }
-  const localDriverIds = [];
-  for (const driver of rawDrivers) {
-    const isAvailable = driver.status === "AVAILABLE" || driver.driverProfile?.availability === true;
-    if (!isAvailable) {
-      continue;
-    }
-    if (!isDriverFresh(driver, nowMs)) {
-      continue;
-    }
-    const dLat = typeof driver.lat === "number" ? driver.lat : driver.driverProfile?.gps?.lat;
-    const dLng = typeof driver.lng === "number" ? driver.lng : driver.driverProfile?.gps?.lng;
-    if (typeof dLat === "number" && typeof dLng === "number") {
-      const dist = getGeodesicDistance(originLat, originLng, dLat, dLng);
-      if (dist <= maxRadiusKm) {
-        localDriverIds.push(driver.driverId || driver.id || `driver_${localDriverIds.length}`);
-      }
-    } else if (cityMeta.isKnownCity && driver.driverProfile?.city && driver.driverProfile.city.toLowerCase() === city.toLowerCase()) {
-      localDriverIds.push(driver.driverId || driver.id || `driver_${localDriverIds.length}`);
-    }
-  }
-  return {
-    city,
-    marketZone,
-    pendingOrders: localRideIds.length,
-    availableDrivers: localDriverIds.length,
-    localRideIds,
-    localDriverIds
-  };
-}
-function buildDemandQueryFilters(originLat, originLng, originAddress) {
-  const geoScope = resolveCityFromCoordinates(originLat, originLng, originAddress);
-  const statusFilter = {
-    field: "status",
-    operator: "in",
-    value: ["SEARCHING_DRIVER", "REQUESTED", "SEARCHING"]
-  };
-  if (geoScope.isKnownCity) {
-    return {
-      collection: "rides",
-      scopeFilter: {
-        field: "city",
-        operator: "==",
-        value: geoScope.city,
-        isCityScoped: true
-      },
-      statusFilter
-    };
-  }
-  const latBin = (Math.round(originLat * 33) / 33).toFixed(3);
-  const lngBin = (Math.round(originLng * 33) / 33).toFixed(3);
-  return {
-    collection: "rides",
-    scopeFilter: {
-      field: "gridKey",
-      operator: "==",
-      value: `${latBin}:${lngBin}`,
-      isCityScoped: false
-    },
-    statusFilter
-  };
-}
-function buildSupplyQueryFilters(originLat, originLng, originAddress) {
-  const geoScope = resolveCityFromCoordinates(originLat, originLng, originAddress);
-  const statusFilter = {
-    field: "status",
-    operator: "==",
-    value: "AVAILABLE"
-  };
-  if (geoScope.isKnownCity) {
-    return {
-      collection: "drivers_online",
-      scopeFilter: {
-        field: "city",
-        operator: "==",
-        value: geoScope.city,
-        isCityScoped: true
-      },
-      statusFilter
-    };
-  }
-  const latBin = (Math.round(originLat * 33) / 33).toFixed(3);
-  const lngBin = (Math.round(originLng * 33) / 33).toFixed(3);
-  return {
-    collection: "drivers_online",
-    scopeFilter: {
-      field: "gridKey",
-      operator: "==",
-      value: `${latBin}:${lngBin}`,
-      isCityScoped: false
-    },
-    statusFilter
   };
 }
 
@@ -966,7 +1157,7 @@ function generateQuoteSignature(payload) {
     currency,
     payload.expiresAt
   ].join("|");
-  return import_crypto.default.createHmac("sha256", secret).update(canonicalData).digest("hex");
+  return import_crypto2.default.createHmac("sha256", secret).update(canonicalData).digest("hex");
 }
 function verifyQuoteSignature(quote) {
   const now = /* @__PURE__ */ new Date();
@@ -988,7 +1179,7 @@ function verifyQuoteSignature(quote) {
     });
     const sealBuffer = Buffer.from(quote.pricingSeal || "", "hex");
     const expectedBuffer = Buffer.from(expectedSig, "hex");
-    if (sealBuffer.length !== expectedBuffer.length || !import_crypto.default.timingSafeEqual(sealBuffer, expectedBuffer)) {
+    if (sealBuffer.length !== expectedBuffer.length || !import_crypto2.default.timingSafeEqual(sealBuffer, expectedBuffer)) {
       return { valid: false, reason: "Firma criptogr\xE1fica inv\xE1lida o datos manipulados" };
     }
     return { valid: true };
@@ -1011,7 +1202,7 @@ async function calculateServerQuote(params) {
   const dynamicEval = calculateDynamicMultiplier(pendingOrders, availableDrivers);
   const rawTotal = normalFare * dynamicEval.multiplier;
   const totalFare = Number(rawTotal.toFixed(2));
-  const quoteId = `quote_${Date.now()}_${import_crypto.default.randomBytes(4).toString("hex")}`;
+  const quoteId = `quote_${Date.now()}_${import_crypto2.default.randomBytes(4).toString("hex")}`;
   const expiresAt = new Date(Date.now() + 10 * 60 * 1e3).toISOString();
   const pricingSeal = generateQuoteSignature({
     quoteId,
@@ -1100,647 +1291,605 @@ var PricingEngineClass = class {
 };
 var PricingEngine = new PricingEngineClass();
 
+// server/services/settings.service.ts
+var TTL_MS = 6e4;
+var cache = null;
+var load = async () => {
+  if (cache && Date.now() - cache.at < TTL_MS) return cache.values;
+  const [rows] = await getPool().query("SELECT setting_key, setting_value FROM app_settings");
+  const values = /* @__PURE__ */ new Map();
+  for (const r of rows) values.set(String(r.setting_key), String(r.setting_value).replace(/^"|"$/g, ""));
+  cache = { at: Date.now(), values };
+  return values;
+};
+var getNumberSetting = async (key, fallback) => {
+  const v = (await load()).get(key);
+  const n = v === void 0 ? NaN : Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+
 // server/services/dispatch.service.ts
-var import_firestore4 = require("firebase-admin/firestore");
-var DispatchService = class {
-  /**
-   * Ejecuta el ciclo de despacho server-side para una orden específica.
-   */
+var KM_PER_DEG_LAT = 111.32;
+var logDispatch = async (conn, rideId, event2, details, extra = {}) => {
+  await conn.execute(
+    `INSERT INTO dispatch_logs (ride_id, driver_id, assignment_id, event, attempt_number, distance_km, details)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [rideId, extra.driverId ?? null, extra.assignmentId ?? null, event2, extra.attempt ?? null, extra.distanceKm ?? null, details.slice(0, 500)]
+  );
+};
+var DispatchService = class _DispatchService {
+  /** Intenta ofrecer el pedido al siguiente motorizado. Seguro de llamar varias veces. */
   static async runDispatchCycle(rideId) {
-    if (!db) {
-      throw new Error("Servicio de base de datos no disponible.");
-    }
-    const rideRef = db.collection("rides").doc(rideId);
-    const rideSnap = await rideRef.get();
-    if (!rideSnap.exists) {
-      return { dispatched: false, rideId, status: "NOT_FOUND", reason: "Viaje no encontrado" };
-    }
-    const ride = rideSnap.data();
-    if (ride.status !== "SEARCHING_DRIVER" && ride.status !== "REQUESTED") {
-      return { dispatched: false, rideId, status: ride.status, reason: "Viaje no est\xE1 en estado de b\xFAsqueda" };
-    }
-    const assignmentsSnap = await db.collection("assignments").where("rideId", "==", rideId).get();
-    const existingAssignments = [];
-    assignmentsSnap.forEach((doc) => {
-      existingAssignments.push(doc.data());
-    });
-    const now = Date.now();
-    const activeAssignment = existingAssignments.find((a) => a.status === "OFFERED");
-    if (activeAssignment) {
-      const expiresAt = new Date(activeAssignment.expiresAt).getTime();
-      if (now <= expiresAt) {
-        return {
-          dispatched: true,
-          rideId,
-          status: "OFFERED",
-          assignedDriverId: activeAssignment.driverId,
-          attemptNumber: activeAssignment.attemptNumber,
-          reason: "Oferta activa en progreso"
-        };
-      } else {
-        const asgDocRef = db.collection("assignments").doc(activeAssignment.assignmentId);
-        await asgDocRef.update({
-          status: "EXPIRED",
-          expiredAt: import_firestore4.FieldValue.serverTimestamp()
-        });
+    const offerSeconds = await getNumberSetting("offer_timeout_seconds", 15);
+    const maxKm = await getNumberSetting("dispatch_max_km", 6);
+    const freshSeconds = await getNumberSetting("driver_fresh_seconds", 120);
+    return withTransaction(async (conn) => {
+      const [rides] = await conn.query(
+        `SELECT id, status, origin_lat, origin_lng, search_expires_at <= NOW(3) AS search_over
+         FROM rides WHERE id = ? FOR UPDATE`,
+        [rideId]
+      );
+      const ride = rides[0];
+      if (!ride || ride.status !== "SEARCHING_DRIVER") {
+        return { dispatched: false, rideId, status: "NOT_SEARCHING" };
       }
-    }
-    const excludedDriverIds = existingAssignments.filter((a) => a.status === "REJECTED" || a.status === "EXPIRED" || a.status === "CANCELLED").map((a) => a.driverId);
-    const city = ride.city || "Trujillo";
-    let queryRef = db.collection("drivers_online").where("status", "==", "AVAILABLE").where("city", "==", city);
-    let onlineSnap = await queryRef.get();
-    if (onlineSnap.empty && ride.gridKey) {
-      onlineSnap = await db.collection("drivers_online").where("status", "==", "AVAILABLE").where("gridKey", "==", ride.gridKey).get();
-    }
-    const availableCandidates = [];
-    const originLat = ride.origin?.lat ?? 0;
-    const originLng = ride.origin?.lng ?? 0;
-    onlineSnap.forEach((doc) => {
-      const d = doc.data();
-      if (!excludedDriverIds.includes(d.driverId)) {
-        const dist = getGeodesicDistance(originLat, originLng, d.lat, d.lng);
-        availableCandidates.push({
-          driverId: d.driverId,
-          driverName: d.driverName,
-          lat: d.lat,
-          lng: d.lng,
-          distanceKm: dist,
-          rating: d.rating || 5
-        });
+      const [open] = await conn.query(
+        `SELECT id, driver_id, attempt_number, expires_at > NOW(3) AS alive
+         FROM assignments WHERE ride_id = ? AND status = 'OFFERED' FOR UPDATE`,
+        [rideId]
+      );
+      for (const a of open) {
+        if (Number(a.alive)) {
+          return { dispatched: true, rideId, status: "OFFERED", assignedDriverId: String(a.driver_id), attemptNumber: Number(a.attempt_number) };
+        }
+        await conn.execute(`UPDATE assignments SET status = 'EXPIRED', responded_at = NOW(3) WHERE id = ?`, [a.id]);
+        await logDispatch(conn, rideId, "ASSIGNMENT_EXPIRED", "El motorizado no respondi\xF3 a tiempo.", { driverId: String(a.driver_id), assignmentId: String(a.id) });
       }
-    });
-    if (availableCandidates.length === 0) {
-      await db.collection("dispatch_logs").add({
-        rideId,
-        event: "NO_DRIVERS_AVAILABLE",
-        attemptNumber: existingAssignments.length + 1,
-        details: "No se encontraron conductores AVAILABLE aptos en la zona.",
-        createdAt: import_firestore4.FieldValue.serverTimestamp()
+      if (Number(ride.search_over)) {
+        await conn.execute(`UPDATE rides SET status = 'EXPIRED', solicitude_status = 'CLOSED' WHERE id = ?`, [rideId]);
+        await logDispatch(conn, rideId, "SEARCH_EXPIRED", "Nadie acept\xF3 el pedido dentro del tiempo de b\xFAsqueda.");
+        return { dispatched: false, rideId, status: "EXPIRED" };
+      }
+      const [cnt] = await conn.query("SELECT COUNT(*) AS n FROM assignments WHERE ride_id = ?", [rideId]);
+      const attempt = Number(cnt[0]?.n || 0) + 1;
+      const lat = Number(ride.origin_lat);
+      const lng = Number(ride.origin_lng);
+      const dLat = maxKm / KM_PER_DEG_LAT;
+      const dLng = maxKm / (KM_PER_DEG_LAT * Math.max(0.1, Math.cos(lat * Math.PI / 180)));
+      const [cands] = await conn.query(
+        `SELECT d.driver_id, u.full_name,
+                6371 * 2 * ASIN(SQRT(POW(SIN(RADIANS(d.lat - ?) / 2), 2) +
+                  COS(RADIANS(?)) * COS(RADIANS(d.lat)) * POW(SIN(RADIANS(d.lng - ?) / 2), 2))) AS km
+         FROM drivers_online d
+         JOIN users u ON u.id = d.driver_id AND u.is_blocked = 0
+         JOIN driver_profiles p ON p.user_id = d.driver_id AND p.status = 'APPROVED'
+              AND (p.suspended_until IS NULL OR p.suspended_until < NOW(3))
+         WHERE d.status = 'AVAILABLE'
+           AND d.last_active > NOW(3) - INTERVAL ? SECOND
+           AND d.lat BETWEEN ? AND ? AND d.lng BETWEEN ? AND ?
+           AND d.driver_id NOT IN (SELECT a.driver_id FROM assignments a WHERE a.ride_id = ?)
+           AND NOT EXISTS (SELECT 1 FROM assignments o WHERE o.driver_id = d.driver_id
+                           AND o.status = 'OFFERED' AND o.expires_at > NOW(3))
+         HAVING km <= ?
+         ORDER BY km ASC
+         LIMIT 1`,
+        [lat, lat, lng, freshSeconds, lat - dLat, lat + dLat, lng - dLng, lng + dLng, rideId, maxKm]
+      );
+      const best = cands[0];
+      if (!best) {
+        await logDispatch(conn, rideId, "NO_DRIVERS_AVAILABLE", "No hay motorizados disponibles cerca.", { attempt });
+        return { dispatched: false, rideId, status: "NO_DRIVERS", attemptNumber: attempt };
+      }
+      const assignmentId = `ASG_${rideId}_${attempt}`;
+      const km = Number(Number(best.km).toFixed(3));
+      await conn.execute(
+        `INSERT INTO assignments (id, ride_id, driver_id, driver_name, distance_km, attempt_number, status, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'OFFERED', NOW(3) + INTERVAL ? SECOND)`,
+        [assignmentId, rideId, best.driver_id, best.full_name, km, attempt, offerSeconds]
+      );
+      await logDispatch(conn, rideId, "ASSIGNMENT_OFFERED", `Ofrecido a motorizado a ${km.toFixed(2)} km`, {
+        driverId: String(best.driver_id),
+        assignmentId,
+        attempt,
+        distanceKm: km
       });
-      return {
-        dispatched: false,
-        rideId,
-        status: "NO_DRIVERS",
-        attemptNumber: existingAssignments.length + 1,
-        reason: "Sin conductores disponibles"
-      };
-    }
-    availableCandidates.sort((a, b) => a.distanceKm - b.distanceKm);
-    const bestCandidate = availableCandidates[0];
-    const assignmentId = `ASG_${rideId}_${Date.now()}`;
-    const expiresAtDate = new Date(now + 15 * 1e3).toISOString();
-    const assignmentData = {
-      assignmentId,
-      rideId,
-      driverId: bestCandidate.driverId,
-      driverName: bestCandidate.driverName || "Conductor Z\xE9nith",
-      distanceKm: bestCandidate.distanceKm,
-      attemptNumber: existingAssignments.length + 1,
-      status: "OFFERED",
-      assignedAt: import_firestore4.FieldValue.serverTimestamp(),
-      expiresAt: expiresAtDate
-    };
-    await db.collection("assignments").doc(assignmentId).set(assignmentData);
-    await db.collection("dispatch_logs").add({
-      rideId,
-      driverId: bestCandidate.driverId,
-      assignmentId,
-      event: "ASSIGNMENT_OFFERED",
-      attemptNumber: assignmentData.attemptNumber,
-      distanceKm: bestCandidate.distanceKm,
-      details: `Viaje ofrecido server-side a conductor a ${bestCandidate.distanceKm.toFixed(2)} km`,
-      createdAt: import_firestore4.FieldValue.serverTimestamp()
+      return { dispatched: true, rideId, status: "OFFERED", assignedDriverId: String(best.driver_id), attemptNumber: attempt };
     });
-    return {
-      dispatched: true,
-      rideId,
-      status: "OFFERED",
-      assignedDriverId: bestCandidate.driverId,
-      attemptNumber: assignmentData.attemptNumber
-    };
+  }
+  /** Revisa todos los pedidos que buscan motorizado y sin oferta vigente. */
+  static async sweep() {
+    const [rows] = await getPool().query(
+      `SELECT r.id FROM rides r
+       WHERE r.status = 'SEARCHING_DRIVER'
+         AND NOT EXISTS (SELECT 1 FROM assignments a WHERE a.ride_id = r.id
+                         AND a.status = 'OFFERED' AND a.expires_at > NOW(3))
+       ORDER BY r.created_at ASC LIMIT 50`
+    );
+    for (const r of rows) {
+      try {
+        await _DispatchService.runDispatchCycle(String(r.id));
+      } catch (err) {
+        console.error("[DISPATCH] Error en barrido:", err.message);
+      }
+    }
+    return rows.length;
+  }
+  static {
+    this.timer = null;
+  }
+  /** Barrido automático cada pocos segundos (se activa al arrancar el servidor). */
+  static startSweeper(intervalMs = 4e3) {
+    if (_DispatchService.timer) return;
+    let running = false;
+    _DispatchService.timer = setInterval(async () => {
+      if (running) return;
+      running = true;
+      try {
+        await _DispatchService.sweep();
+      } catch (err) {
+        console.error("[DISPATCH] Barrido fall\xF3:", err.message);
+      } finally {
+        running = false;
+      }
+    }, intervalMs);
+    _DispatchService.timer.unref();
+  }
+  static stopSweeper() {
+    if (_DispatchService.timer) clearInterval(_DispatchService.timer);
+    _DispatchService.timer = null;
+  }
+};
+
+// server/services/http-error.ts
+var HttpError = class extends Error {
+  constructor(statusCode, message) {
+    super(message);
+    this.statusCode = statusCode;
   }
 };
 
 // server/services/ride.service.ts
-var OTP_SECRET = process.env.OTP_SECRET || "ZENITH_SECURE_OTP_SALT_2026";
-var ALLOWED_STATUS_TRANSITIONS = {
-  REQUESTED: ["SEARCHING_DRIVER", "DRIVER_ASSIGNED", "CANCELLED"],
-  SEARCHING_DRIVER: ["DRIVER_ASSIGNED", "CANCELLED"],
-  DRIVER_ASSIGNED: ["DRIVER_ARRIVING", "CANCELLED"],
-  DRIVER_ARRIVING: ["WAITING_FOR_OTP", "CANCELLED"],
-  WAITING_FOR_OTP: ["IN_PROGRESS", "CANCELLED"],
-  IN_PROGRESS: ["COMPLETED", "CANCELLED"],
-  COMPLETED: [],
-  CANCELLED: []
+var DRIVER_TRANSITIONS = {
+  DRIVER_ASSIGNED: ["DRIVER_ARRIVING"],
+  DRIVER_ARRIVING: ["WAITING_FOR_OTP"],
+  IN_PROGRESS: ["COMPLETED"]
 };
-function hashOtp(rideId, otpCode) {
-  return import_crypto2.default.createHmac("sha256", OTP_SECRET).update(`${rideId}:${otpCode}`).digest("hex");
-}
+var OTP_MAX_ATTEMPTS2 = 3;
+var otpSecret = () => {
+  const s = process.env.OTP_SECRET;
+  if (!s && process.env.NODE_ENV === "production") throw new Error("OTP_SECRET no configurado.");
+  return s || "ZENITH_DEV_OTP_SECRET";
+};
+var hashOtp2 = (rideId, code) => import_crypto3.default.createHmac("sha256", otpSecret()).update(`${rideId}:${code}`).digest("hex");
+var toNum = (v) => Number(v);
+var toIso = (v) => v instanceof Date ? v.toISOString() : v ? String(v) : null;
+var parseJson = (v) => {
+  if (v === null || v === void 0) return null;
+  if (typeof v === "string") {
+    try {
+      return JSON.parse(v);
+    } catch {
+      return null;
+    }
+  }
+  return v;
+};
+var toRideView = (r) => ({
+  id: String(r.id),
+  status: r.status,
+  passengerId: String(r.passenger_id),
+  passengerName: r.passenger_name ?? null,
+  driverId: r.driver_id ?? null,
+  driverName: r.driver_name ?? null,
+  driverPhone: r.driver_phone ?? null,
+  origin: { address: String(r.origin_address), lat: toNum(r.origin_lat), lng: toNum(r.origin_lng) },
+  destination: { address: String(r.destination_address), lat: toNum(r.destination_lat), lng: toNum(r.destination_lng) },
+  driverLocation: r.driver_lat !== null && r.driver_lat !== void 0 ? { lat: toNum(r.driver_lat), lng: toNum(r.driver_lng) } : null,
+  price: toNum(r.protected_price),
+  distanceKm: r.distance_km !== null ? toNum(r.distance_km) : null,
+  paymentMethod: String(r.payment_method),
+  delivery: parseJson(r.package_info),
+  createdAt: toIso(r.created_at) || "",
+  acceptedAt: toIso(r.accepted_at),
+  startedAt: toIso(r.started_at),
+  completedAt: toIso(r.completed_at)
+});
+var lockRide = async (conn, rideId) => {
+  const [rows] = await conn.query(
+    "SELECT *, (otp_expires_at IS NOT NULL AND otp_expires_at <= NOW(3)) AS otp_expired FROM rides WHERE id = ? FOR UPDATE",
+    [rideId]
+  );
+  if (!rows[0]) throw new HttpError(404, "Pedido no encontrado.");
+  return rows[0];
+};
+var event = async (conn, rideId, actorRole, actorId, action, result = "OK") => {
+  await conn.execute(
+    "INSERT INTO operational_events (ride_id, actor_role, actor_id, action, result) VALUES (?, ?, ?, ?, ?)",
+    [rideId, actorRole, actorId, action, result]
+  );
+};
+var cleanText = (v, max) => typeof v === "string" && v.trim() ? v.trim().slice(0, max) : void 0;
 var RideService = class {
-  /**
-   * GATEKEEPER SERVER-SIDE: Creación de viajes y órdenes de entrega.
-   * Valida identidad contra JWT, verifica la firma criptográfica HMAC del quote,
-   * controla idempotencia y persiste el documento en Firestore con Firebase Admin SDK.
-   */
-  static async requestRide(payload, authenticatedUid) {
-    if (!db) {
-      throw new Error("Servicio de base de datos Firestore no disponible en backend.");
-    }
-    if (!payload || !payload.quote) {
-      throw new Error("El payload debe contener un objeto de cotizaci\xF3n (quote) v\xE1lido emitido por el servidor.");
-    }
-    if (payload.passengerId !== authenticatedUid) {
-      const error = new Error("Violaci\xF3n de identidad Zero-Trust: passengerId no coincide con el token autenticado.");
-      error.statusCode = 403;
-      throw error;
-    }
-    const { quote } = payload;
-    const verification = verifyQuoteSignature(quote);
-    if (!verification.valid) {
-      const error = new Error(`Cotizaci\xF3n rechazada por el Gatekeeper: ${verification.reason}`);
-      error.statusCode = 400;
-      throw error;
-    }
-    if (quote.currency !== "PEN") {
-      const error = new Error("Moneda no autorizada para operaci\xF3n en Z\xE9nith (solo PEN).");
-      error.statusCode = 400;
-      throw error;
-    }
-    const idempotencyKey = payload.idempotencyKey?.trim() || quote.quoteId;
-    const payloadHash = import_crypto2.default.createHash("sha256").update(JSON.stringify({
-      passengerId: authenticatedUid,
-      quoteId: quote.quoteId,
-      origin: {
-        address: (quote.origin?.address || "").trim(),
-        lat: Number(quote.origin?.lat !== void 0 ? Number(quote.origin.lat).toFixed(5) : 0),
-        lng: Number(quote.origin?.lng !== void 0 ? Number(quote.origin.lng).toFixed(5) : 0)
-      },
-      destination: {
-        address: (quote.destination?.address || "").trim(),
-        lat: Number(quote.destination?.lat !== void 0 ? Number(quote.destination.lat).toFixed(5) : 0),
-        lng: Number(quote.destination?.lng !== void 0 ? Number(quote.destination.lng).toFixed(5) : 0)
-      },
-      totalFare: Number(quote.totalFare.toFixed(2)),
-      currency: quote.currency || "PEN",
-      pricingVersion: quote.pricingVersion
-    })).digest("hex");
-    const idempotencyRef = db.collection("idempotency_keys").doc(idempotencyKey);
-    const createdRide = await db.runTransaction(async (transaction) => {
-      const idempDoc = await transaction.get(idempotencyRef);
-      if (idempDoc.exists) {
-        const existingKeyData = idempDoc.data();
-        if (existingKeyData.payloadHash !== payloadHash) {
-          const conflictErr = new Error(
-            "Conflicto de Idempotencia: La clave ya fue utilizada para una solicitud con par\xE1metros diferentes."
-          );
-          conflictErr.statusCode = 409;
-          throw conflictErr;
-        }
-        const existingRideRef = db.collection("rides").doc(existingKeyData.rideId);
-        const existingRideDoc = await transaction.get(existingRideRef);
-        if (existingRideDoc.exists) {
-          console.log(`[RIDE_GATEKEEPER] Idempotencia at\xF3mica activada para key: ${idempotencyKey}. Retornando viaje existente ${existingKeyData.rideId}.`);
-          return {
-            id: existingKeyData.rideId,
-            ...existingRideDoc.data(),
-            _idempotent: true
-          };
-        }
+  /** El cliente confirma la cotización firmada y se crea el pedido. */
+  static async requestRide(input) {
+    const { quote } = input;
+    if (!quote || typeof quote !== "object") throw new HttpError(400, "Falta la cotizaci\xF3n.");
+    const check = verifyQuoteSignature(quote);
+    if (!check.valid) throw new HttpError(400, `Cotizaci\xF3n no v\xE1lida: ${check.reason}. Vuelve a cotizar.`);
+    const paymentMethod = ["cash", "yape", "plin"].includes(String(input.paymentMethod)) ? String(input.paymentMethod) : "cash";
+    const idemKey = (cleanText(input.idempotencyKey, 120) || quote.quoteId).slice(0, 120);
+    const payloadHash = import_crypto3.default.createHash("sha256").update(JSON.stringify({ p: input.passengerId, q: quote.quoteId, f: quote.totalFare.toFixed(2) })).digest("hex");
+    const delivery = input.delivery ? {
+      description: cleanText(input.delivery.description, 300),
+      receptorName: cleanText(input.delivery.receptorName, 150),
+      receptorPhone: cleanText(input.delivery.receptorPhone, 20),
+      notes: cleanText(input.delivery.notes, 300)
+    } : null;
+    const searchSeconds = await getNumberSetting("search_timeout_seconds", 300);
+    const otpMinutes = await getNumberSetting("pickup_otp_minutes", 60);
+    const result = await withTransaction(async (conn) => {
+      const [idem] = await conn.query(
+        "SELECT resource_id, payload_hash FROM idempotency_keys WHERE idem_key = ? FOR UPDATE",
+        [idemKey]
+      );
+      if (idem[0]) {
+        if (idem[0].payload_hash !== payloadHash) throw new HttpError(409, "Esta cotizaci\xF3n ya se us\xF3 para otro pedido.");
+        const [rows2] = await conn.query("SELECT * FROM rides WHERE id = ?", [idem[0].resource_id]);
+        if (!rows2[0]) throw new HttpError(409, "Pedido no disponible.");
+        return { ride: toRideView(rows2[0]), otpCode: String(rows2[0].otp_code || ""), idempotent: true };
       }
-      const newRideRef = db.collection("rides").doc();
-      const rideId = newRideRef.id;
-      const otpCode = import_crypto2.default.randomInt(100, 1e3).toString();
-      const otpHash = hashOtp(rideId, otpCode);
-      const rideDocument = {
-        id: rideId,
-        idempotencyKey,
-        passengerId: authenticatedUid,
-        passengerName: payload.passengerName?.trim() || "Pasajero Z\xE9nith",
-        passengerPhone: payload.passengerPhone?.trim() || "",
-        origin: {
-          address: quote.origin.address,
-          lat: quote.origin.lat,
-          lng: quote.origin.lng
-        },
-        destination: {
-          address: quote.destination.address,
-          lat: quote.destination.lat,
-          lng: quote.destination.lng
-        },
-        city: quote.marketZone?.city || (quote.origin ? resolveCityFromCoordinates(quote.origin.lat, quote.origin.lng, quote.origin.address).city : "Per\xFA"),
-        marketZoneId: quote.marketZone?.id || null,
-        gridKey: quote.marketZone?.gridKey || null,
-        // AUTORIDAD TOTAL DEL BACKEND SOBRE PRECIOS
-        protectedPrice: quote.totalFare,
-        finalPrice: quote.totalFare,
-        basePrice: quote.normalFare,
-        multiplier: quote.multiplier,
-        marketPressure: quote.pressure ?? 1,
-        distance: quote.distance,
-        duration: quote.duration ?? 0,
-        currency: "PEN",
-        quoteId: quote.quoteId,
-        pricingSeal: quote.pricingSeal,
-        pricingVersion: quote.pricingVersion,
-        paymentMethod: payload.paymentMethod || "cash",
-        paymentState: payload.paymentState || "AUTHORIZED",
-        paymentId: payload.paymentId || `tx_${Date.now()}`,
-        status: "SEARCHING_DRIVER",
-        // Generación Segura de OTP Criptográfico Server-Side
-        otpHash,
-        otpAttempts: 0,
-        otpMaxAttempts: 3,
-        otpExpiresAt: new Date(Date.now() + 30 * 60 * 1e3).toISOString(),
-        otpVerified: false,
-        passengerOtp: otpCode,
-        createdAt: import_firestore5.FieldValue.serverTimestamp(),
-        updatedAt: import_firestore5.FieldValue.serverTimestamp()
-      };
-      if (payload.orderType === "DELIVERY" || payload.packageInfo) {
-        rideDocument.orderType = "DELIVERY";
-        if (payload.packageInfo) rideDocument.packageInfo = payload.packageInfo;
-        if (payload.receptor) rideDocument.receptor = payload.receptor;
-        if (payload.pagador) rideDocument.pagador = payload.pagador;
-        if (payload.solicitante) rideDocument.solicitante = payload.solicitante;
-        if (payload.evidenceLevel) rideDocument.evidenceLevel = payload.evidenceLevel;
-        if (payload.returnContingency) rideDocument.returnContingency = payload.returnContingency;
-      }
-      transaction.set(newRideRef, rideDocument);
-      transaction.set(idempotencyRef, {
-        idempotencyKey,
-        rideId,
-        payloadHash,
-        passengerId: authenticatedUid,
-        createdAt: import_firestore5.FieldValue.serverTimestamp()
-      });
-      console.log(`[RIDE_GATEKEEPER] Viaje ${rideId} creado at\xF3micamente con tarifa inmutable S/ ${quote.totalFare.toFixed(2)}.`);
-      return {
-        id: rideId,
-        ...rideDocument,
-        _idempotent: false
-      };
+      const [active] = await conn.query(
+        `SELECT id FROM rides WHERE passenger_id = ?
+         AND status IN ('SEARCHING_DRIVER','DRIVER_ASSIGNED','DRIVER_ARRIVING','WAITING_FOR_OTP','IN_PROGRESS') LIMIT 1`,
+        [input.passengerId]
+      );
+      if (active[0]) throw new HttpError(409, "Ya tienes un pedido en curso.");
+      const [users] = await conn.query("SELECT full_name, phone, is_blocked FROM users WHERE id = ?", [input.passengerId]);
+      const user = users[0];
+      if (!user || user.is_blocked) throw new HttpError(403, "Cuenta no disponible.");
+      const rideId = import_crypto3.default.randomUUID();
+      const otpCode = import_crypto3.default.randomInt(1e3, 1e4).toString();
+      const city = quote.marketZone?.city || resolveCityFromCoordinates(quote.origin.lat, quote.origin.lng, quote.origin.address).city;
+      await conn.execute(
+        `INSERT INTO rides (
+           id, passenger_id, passenger_name, passenger_phone, status, order_type, city,
+           origin_address, origin_lat, origin_lng, destination_address, destination_lat, destination_lng,
+           distance_km, duration_min, protected_price, normal_fare, multiplier, payment_method,
+           pricing_seal, pricing_version, quote_id, solicitude_status, package_info,
+           otp_code, otp_hash, otp_expires_at, search_expires_at)
+         VALUES (?, ?, ?, ?, 'SEARCHING_DRIVER', 'DELIVERY', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REQUESTED', ?,
+                 ?, ?, NOW(3) + INTERVAL ? MINUTE, NOW(3) + INTERVAL ? SECOND)`,
+        [
+          rideId,
+          input.passengerId,
+          user.full_name,
+          user.phone,
+          city,
+          quote.origin.address.slice(0, 255),
+          quote.origin.lat,
+          quote.origin.lng,
+          quote.destination.address.slice(0, 255),
+          quote.destination.lat,
+          quote.destination.lng,
+          quote.distance,
+          quote.duration ?? null,
+          quote.totalFare,
+          quote.normalFare,
+          quote.multiplier,
+          paymentMethod,
+          quote.pricingSeal,
+          quote.pricingVersion,
+          quote.quoteId,
+          delivery ? JSON.stringify(delivery) : null,
+          otpCode,
+          hashOtp2(rideId, otpCode),
+          otpMinutes,
+          searchSeconds
+        ]
+      );
+      await conn.execute(
+        `INSERT INTO idempotency_keys (idem_key, user_id, scope, resource_id, payload_hash) VALUES (?, ?, 'RIDE_REQUEST', ?, ?)`,
+        [idemKey, input.passengerId, rideId, payloadHash]
+      );
+      await event(conn, rideId, "SOLICITANTE", input.passengerId, "RIDE_REQUESTED");
+      const [rows] = await conn.query("SELECT * FROM rides WHERE id = ?", [rideId]);
+      return { ride: toRideView(rows[0]), otpCode, idempotent: false };
     });
-    if (!createdRide._idempotent) {
-      DispatchService.runDispatchCycle(createdRide.id).catch((err) => {
-        console.warn(`[SERVER_DISPATCH] Error iniciando ciclo de despacho para ${createdRide.id}:`, err);
-      });
+    if (!result.idempotent) {
+      DispatchService.runDispatchCycle(result.ride.id).catch(
+        (err) => console.error("[DISPATCH] No se pudo iniciar despacho:", err.message)
+      );
     }
-    return createdRide;
+    return result;
   }
-  static async acceptRide(rideId, driverId, driverName, driverLocation) {
-    if (!db) throw new Error("Base de datos no disponible.");
-    const rideRef = db.collection("rides").doc(rideId);
-    const driverPresenceRef = db.collection("drivers_online").doc(driverId);
-    return await db.runTransaction(async (transaction) => {
-      const rideDoc = await transaction.get(rideRef);
-      if (!rideDoc.exists) {
-        const err = new Error("Viaje no encontrado.");
-        err.statusCode = 404;
-        throw err;
-      }
-      const ride = rideDoc.data();
-      if (ride.status === "DRIVER_ASSIGNED" && ride.driverId === driverId) {
-        return {
-          id: rideId,
-          ...ride,
-          _idempotent: true
-        };
-      }
-      if (ride.status !== "SEARCHING_DRIVER" && ride.status !== "REQUESTED") {
-        const conflictErr = new Error("El viaje ya no est\xE1 disponible para asignaci\xF3n (asignado a otro conductor o finalizado).");
-        conflictErr.statusCode = 409;
-        throw conflictErr;
-      }
-      const driverDoc = await transaction.get(driverPresenceRef);
-      if (!driverDoc.exists) {
-        const unavailErr = new Error("El conductor no se encuentra conectado a la red de despacho.");
-        unavailErr.statusCode = 400;
-        throw unavailErr;
-      }
-      const driverData = driverDoc.data();
-      if (driverData.status !== "AVAILABLE") {
-        const busyErr = new Error(`El conductor no est\xE1 disponible para aceptar viajes (estado actual: ${driverData.status}).`);
-        busyErr.statusCode = 409;
-        throw busyErr;
-      }
-      const resolvedDriverName = driverName?.trim() || driverData.driverName || "Conductor Z\xE9nith";
-      const resolvedLocation = driverLocation || (driverData.lat && driverData.lng ? { lat: driverData.lat, lng: driverData.lng } : null);
-      const updateData = {
-        status: "DRIVER_ASSIGNED",
-        driverId,
-        driverName: resolvedDriverName,
-        driverLocation: resolvedLocation,
-        acceptedAt: import_firestore5.FieldValue.serverTimestamp(),
-        updatedAt: import_firestore5.FieldValue.serverTimestamp()
-      };
-      transaction.update(rideRef, updateData);
-      transaction.update(driverPresenceRef, {
-        status: "BUSY",
-        currentRideId: rideId,
-        lastActive: import_firestore5.FieldValue.serverTimestamp()
-      });
-      console.log(`[RIDE_LIFECYCLE] Viaje ${rideId} asignado exitosamente al conductor ${driverId}. Estado de conductor: BUSY.`);
-      return {
-        id: rideId,
-        ...ride,
-        ...updateData,
-        _idempotent: false
-      };
+  /** Datos del pedido para cliente o motorizado asignado. */
+  static async getRide(rideId, userId, isAdmin2 = false) {
+    const [rows] = await getPool().query("SELECT * FROM rides WHERE id = ?", [rideId]);
+    const r = rows[0];
+    if (!r) throw new HttpError(404, "Pedido no encontrado.");
+    const isPassenger = r.passenger_id === userId;
+    if (!isPassenger && r.driver_id !== userId && !isAdmin2) throw new HttpError(403, "No tienes acceso a este pedido.");
+    const view = toRideView(r);
+    if (isPassenger && !Number(r.otp_verified) && ["DRIVER_ASSIGNED", "DRIVER_ARRIVING", "WAITING_FOR_OTP", "SEARCHING_DRIVER"].includes(String(r.status))) {
+      return { ...view, otpCode: String(r.otp_code || "") };
+    }
+    return view;
+  }
+  /** Pedido activo del usuario (cliente o motorizado), para reanudar la pantalla al abrir la app. */
+  static async getActiveRide(userId) {
+    const [rows] = await getPool().query(
+      `SELECT * FROM rides WHERE (passenger_id = ? OR driver_id = ?)
+       AND status IN ('SEARCHING_DRIVER','DRIVER_ASSIGNED','DRIVER_ARRIVING','WAITING_FOR_OTP','IN_PROGRESS')
+       ORDER BY created_at DESC LIMIT 1`,
+      [userId, userId]
+    );
+    return rows[0] ? toRideView(rows[0]) : null;
+  }
+  /** El motorizado acepta la oferta que se le hizo. */
+  static async acceptOffer(assignmentId, driverId) {
+    return withTransaction(async (conn) => {
+      const [pre] = await conn.query("SELECT ride_id, driver_id FROM assignments WHERE id = ?", [assignmentId]);
+      if (!pre[0] || pre[0].driver_id !== driverId) throw new HttpError(404, "Oferta no encontrada.");
+      const ride = await lockRide(conn, String(pre[0].ride_id));
+      const [asg] = await conn.query(
+        "SELECT id, status, expires_at > NOW(3) AS alive FROM assignments WHERE id = ? FOR UPDATE",
+        [assignmentId]
+      );
+      const a = asg[0];
+      if (a.status === "ACCEPTED" && ride.driver_id === driverId) return toRideView(ride);
+      if (a.status !== "OFFERED" || !Number(a.alive)) throw new HttpError(409, "La oferta ya venci\xF3.");
+      if (ride.status !== "SEARCHING_DRIVER") throw new HttpError(409, "El pedido ya no est\xE1 disponible.");
+      const [drv] = await conn.query(
+        `SELECT d.status, u.full_name, u.phone, d.lat, d.lng FROM drivers_online d JOIN users u ON u.id = d.driver_id
+         WHERE d.driver_id = ? FOR UPDATE`,
+        [driverId]
+      );
+      const d = drv[0];
+      if (!d || d.status !== "AVAILABLE") throw new HttpError(409, "Debes estar disponible para aceptar.");
+      await conn.execute(`UPDATE assignments SET status = 'ACCEPTED', responded_at = NOW(3) WHERE id = ?`, [assignmentId]);
+      await conn.execute(
+        `UPDATE rides SET status = 'DRIVER_ASSIGNED', solicitude_status = 'ASSIGNED', transit_status = 'TO_PICKUP',
+           driver_id = ?, driver_name = ?, driver_phone = ?, driver_lat = ?, driver_lng = ?, accepted_at = NOW(3)
+         WHERE id = ?`,
+        [driverId, d.full_name, d.phone, d.lat, d.lng, ride.id]
+      );
+      await conn.execute(`UPDATE drivers_online SET status = 'BUSY', current_ride_id = ? WHERE driver_id = ?`, [ride.id, driverId]);
+      await conn.execute(
+        `INSERT INTO dispatch_logs (ride_id, driver_id, assignment_id, event, details) VALUES (?, ?, ?, 'ASSIGNMENT_ACCEPTED', 'Aceptado por el motorizado')`,
+        [ride.id, driverId, assignmentId]
+      );
+      await event(conn, String(ride.id), "MOTORIZADO", driverId, "OFFER_ACCEPTED");
+      const [rows] = await conn.query("SELECT * FROM rides WHERE id = ?", [ride.id]);
+      return toRideView(rows[0]);
     });
   }
-  static async cancelRide(rideId, userId) {
-    if (!db) throw new Error("Base de datos no disponible.");
-    const rideRef = db.collection("rides").doc(rideId);
-    return await db.runTransaction(async (transaction) => {
-      const rideDoc = await transaction.get(rideRef);
-      if (!rideDoc.exists) {
-        const err = new Error("Viaje no encontrado.");
-        err.statusCode = 404;
-        throw err;
-      }
-      const ride = rideDoc.data();
-      if (ride?.passengerId !== userId && ride?.driverId !== userId) {
-        const err = new Error("No tienes permiso para cancelar este viaje.");
-        err.statusCode = 403;
-        throw err;
-      }
-      if (["COMPLETED", "CANCELLED"].includes(ride?.status)) {
-        const err = new Error("El viaje ya ha finalizado.");
-        err.statusCode = 400;
-        throw err;
-      }
-      let driverSnap = null;
-      let driverRef = null;
-      if (ride?.driverId) {
-        driverRef = db.collection("drivers_online").doc(ride.driverId);
-        driverSnap = await transaction.get(driverRef);
-      }
-      transaction.update(rideRef, {
-        status: "CANCELLED",
-        cancelledBy: userId,
-        updatedAt: import_firestore5.FieldValue.serverTimestamp()
-      });
-      if (driverRef && driverSnap && driverSnap.exists) {
-        transaction.update(driverRef, {
-          status: "AVAILABLE",
-          currentRideId: null,
-          lastActive: import_firestore5.FieldValue.serverTimestamp()
-        });
-      }
+  /** El motorizado rechaza: se ofrece al siguiente al instante. */
+  static async rejectOffer(assignmentId, driverId) {
+    const rideId = await withTransaction(async (conn) => {
+      const [asg] = await conn.query("SELECT ride_id, driver_id, status FROM assignments WHERE id = ? FOR UPDATE", [assignmentId]);
+      const a = asg[0];
+      if (!a || a.driver_id !== driverId) throw new HttpError(404, "Oferta no encontrada.");
+      if (a.status !== "OFFERED") return String(a.ride_id);
+      await conn.execute(`UPDATE assignments SET status = 'REJECTED', responded_at = NOW(3) WHERE id = ?`, [assignmentId]);
+      await conn.execute(
+        `INSERT INTO dispatch_logs (ride_id, driver_id, assignment_id, event, details) VALUES (?, ?, ?, 'ASSIGNMENT_REJECTED', 'Rechazado por el motorizado')`,
+        [a.ride_id, driverId, assignmentId]
+      );
+      return String(a.ride_id);
     });
+    await DispatchService.runDispatchCycle(rideId);
   }
-  static async updateRideStatus(rideId, driverId, status) {
-    if (!db) throw new Error("Base de datos no disponible.");
-    const rideRef = db.collection("rides").doc(rideId);
-    return await db.runTransaction(async (transaction) => {
-      const rideDoc = await transaction.get(rideRef);
-      if (!rideDoc.exists) {
-        const err = new Error("Viaje no encontrado.");
-        err.statusCode = 404;
-        throw err;
+  /** Avance del motorizado: en camino -> llegué (pide código) -> entregado. */
+  static async updateStatus(rideId, driverId, next) {
+    return withTransaction(async (conn) => {
+      const ride = await lockRide(conn, rideId);
+      if (ride.driver_id !== driverId) throw new HttpError(403, "Este pedido no es tuyo.");
+      const allowed = DRIVER_TRANSITIONS[String(ride.status)] || [];
+      if (!allowed.includes(next)) {
+        throw new HttpError(400, next === "IN_PROGRESS" ? "Para iniciar el viaje debes ingresar el c\xF3digo del cliente." : `No se puede pasar de ${ride.status} a ${next}.`);
       }
-      const ride = rideDoc.data();
-      if (ride.driverId !== driverId) {
-        const err = new Error("No tienes permiso para actualizar este viaje.");
-        err.statusCode = 403;
-        throw err;
-      }
-      const currentStatus = ride.status;
-      const allowedNext = ALLOWED_STATUS_TRANSITIONS[currentStatus] || [];
-      if (!allowedNext.includes(status)) {
-        const err = new Error(`Transici\xF3n ilegal de '${currentStatus}' a '${status}'.`);
-        err.statusCode = 400;
-        throw err;
-      }
-      if (status === "IN_PROGRESS") {
-        const err = new Error("El estado IN_PROGRESS solo puede alcanzarse validando el c\xF3digo OTP mediante /api/rides/:rideId/verify-otp.");
-        err.statusCode = 400;
-        throw err;
-      }
-      let driverSnap = null;
-      let driverRef = null;
-      if (status === "COMPLETED") {
-        driverRef = db.collection("drivers_online").doc(driverId);
-        driverSnap = await transaction.get(driverRef);
-      }
-      const updatePayload = {
-        status,
-        updatedAt: import_firestore5.FieldValue.serverTimestamp()
+      const extra = {
+        DRIVER_ARRIVING: ", transit_status = 'TO_PICKUP'",
+        WAITING_FOR_OTP: ", transit_status = 'AT_PICKUP', pickup_arrived_at = NOW(3)",
+        COMPLETED: ", transit_status = 'AT_DESTINATION', solicitude_status = 'COMPLETED', destination_arrived_at = NOW(3), completed_at = NOW(3)"
       };
-      if (status === "COMPLETED") {
-        updatePayload.completedAt = import_firestore5.FieldValue.serverTimestamp();
+      await conn.execute(`UPDATE rides SET status = ?${extra[next] || ""} WHERE id = ?`, [next, rideId]);
+      if (next === "COMPLETED") {
+        await conn.execute(`UPDATE drivers_online SET status = 'AVAILABLE', current_ride_id = NULL WHERE driver_id = ?`, [driverId]);
       }
-      transaction.update(rideRef, updatePayload);
-      if (status === "COMPLETED" && driverRef && driverSnap && driverSnap.exists) {
-        transaction.update(driverRef, {
-          status: "AVAILABLE",
-          currentRideId: null,
-          lastActive: import_firestore5.FieldValue.serverTimestamp()
-        });
-      }
-      return { success: true, message: `Estado actualizado a ${status}.`, status };
+      await event(conn, rideId, "MOTORIZADO", driverId, `STATUS_${next}`);
+      const [rows] = await conn.query("SELECT * FROM rides WHERE id = ?", [rideId]);
+      return toRideView(rows[0]);
     });
   }
-  /**
-   * Validador oficial y autoritativo de código de abordaje (OTP).
-   * Exclusivo para el conductor asignado cuando el viaje está en WAITING_FOR_OTP.
-   */
-  static async verifyOtp(rideId, driverId, inputOtp) {
-    if (!db) throw new Error("Base de datos no disponible.");
-    const rideRef = db.collection("rides").doc(rideId);
-    return await db.runTransaction(async (transaction) => {
-      const rideDoc = await transaction.get(rideRef);
-      if (!rideDoc.exists) {
-        const err = new Error("Viaje no encontrado.");
-        err.statusCode = 404;
-        throw err;
+  /** El motorizado ingresa el código que le dicta el cliente. 3 intentos. */
+  static async verifyOtp(rideId, driverId, code) {
+    const outcome = await withTransaction(async (conn) => {
+      const ride = await lockRide(conn, rideId);
+      if (ride.driver_id !== driverId) throw new HttpError(403, "Este pedido no es tuyo.");
+      if (ride.status !== "WAITING_FOR_OTP") throw new HttpError(400, "Primero marca que llegaste al punto de recojo.");
+      if (Number(ride.otp_attempts) >= OTP_MAX_ATTEMPTS2) throw new HttpError(429, "C\xF3digo bloqueado por intentos. Contacta a soporte.");
+      if (Number(ride.otp_expired)) throw new HttpError(400, "El c\xF3digo venci\xF3. Contacta a soporte.");
+      const given = typeof code === "string" ? code.trim() : "";
+      const ok = /^\d{4}$/.test(given) && import_crypto3.default.timingSafeEqual(Buffer.from(hashOtp2(rideId, given), "hex"), Buffer.from(String(ride.otp_hash), "hex"));
+      if (!ok) {
+        await conn.execute("UPDATE rides SET otp_attempts = otp_attempts + 1 WHERE id = ?", [rideId]);
+        await event(conn, rideId, "MOTORIZADO", driverId, "OTP_CHECK", "WRONG");
+        return { ok: false, left: OTP_MAX_ATTEMPTS2 - Number(ride.otp_attempts) - 1 };
       }
-      const ride = rideDoc.data();
-      if (ride.driverId !== driverId) {
-        const err = new Error("No tienes permiso para validar el c\xF3digo de este viaje.");
-        err.statusCode = 403;
-        throw err;
-      }
-      if (ride.status !== "WAITING_FOR_OTP") {
-        const err = new Error(`El viaje no se encuentra esperando c\xF3digo OTP (estado actual: ${ride.status}).`);
-        err.statusCode = 400;
-        throw err;
-      }
-      if (ride.otpVerified) {
-        const err = new Error("El c\xF3digo OTP ya fue consumido.");
-        err.statusCode = 400;
-        throw err;
-      }
-      const currentAttempts = ride.otpAttempts || 0;
-      const maxAttempts = ride.otpMaxAttempts || 3;
-      if (currentAttempts >= maxAttempts) {
-        const err = new Error("L\xEDmite de intentos de OTP excedido. Por seguridad el abordaje est\xE1 bloqueado.");
-        err.statusCode = 400;
-        throw err;
-      }
-      if (ride.otpExpiresAt && /* @__PURE__ */ new Date() > new Date(ride.otpExpiresAt)) {
-        const err = new Error("El c\xF3digo OTP ha expirado.");
-        err.statusCode = 400;
-        throw err;
-      }
-      const inputHash = hashOtp(rideId, (inputOtp || "").trim());
-      if (inputHash !== ride.otpHash) {
-        const nextAttempts = currentAttempts + 1;
-        await rideRef.update({
-          otpAttempts: nextAttempts,
-          updatedAt: import_firestore5.FieldValue.serverTimestamp()
-        });
-        const remaining = Math.max(0, maxAttempts - nextAttempts);
-        const err = new Error(`C\xF3digo OTP incorrecto. Intentos restantes: ${remaining}.`);
-        err.statusCode = 400;
-        throw err;
-      }
-      transaction.update(rideRef, {
-        status: "IN_PROGRESS",
-        otpVerified: true,
-        startedAt: import_firestore5.FieldValue.serverTimestamp(),
-        updatedAt: import_firestore5.FieldValue.serverTimestamp()
-      });
-      console.log(`[RIDE_OTP] Viaje ${rideId} inici\xF3 su curso exitosamente (OTP verificado por conductor ${driverId}).`);
-      return {
-        success: true,
-        message: "C\xF3digo de seguridad verificado exitosamente. Viaje iniciado.",
-        status: "IN_PROGRESS"
-      };
+      await conn.execute(
+        `UPDATE rides SET status = 'IN_PROGRESS', otp_verified = 1, transit_status = 'IN_TRANSIT',
+           solicitude_status = 'ACTIVE', started_at = NOW(3), driver_started_trip_at = NOW(3) WHERE id = ?`,
+        [rideId]
+      );
+      await event(conn, rideId, "MOTORIZADO", driverId, "OTP_CHECK", "OK");
+      const [rows] = await conn.query("SELECT * FROM rides WHERE id = ?", [rideId]);
+      return { ok: true, ride: toRideView(rows[0]) };
     });
+    if (!outcome.ok) throw new HttpError(400, `C\xF3digo incorrecto. Te quedan ${Math.max(0, outcome.left)} intentos.`);
+    return outcome.ride;
   }
-  /**
-   * Consulta segura del código OTP de abordaje exclusivamente por el pasajero propietario.
-   */
-  static async getPassengerOtp(rideId, passengerId) {
-    if (!db) throw new Error("Base de datos no disponible.");
-    const rideSnap = await db.collection("rides").doc(rideId).get();
-    if (!rideSnap.exists) {
-      const err = new Error("Viaje no encontrado.");
-      err.statusCode = 404;
-      throw err;
-    }
-    const ride = rideSnap.data();
-    if (ride.passengerId !== passengerId) {
-      const err = new Error("No tienes permiso para consultar el c\xF3digo de este viaje.");
-      err.statusCode = 403;
-      throw err;
-    }
-    return {
-      otpCode: ride.passengerOtp,
-      expiresAt: ride.otpExpiresAt,
-      attemptsRemaining: Math.max(0, (ride.otpMaxAttempts || 3) - (ride.otpAttempts || 0))
-    };
+  /** Cancelar: el cliente o el motorizado asignado, antes de que termine. */
+  static async cancelRide(rideId, userId, reason) {
+    return withTransaction(async (conn) => {
+      const ride = await lockRide(conn, rideId);
+      const isPassenger = ride.passenger_id === userId;
+      const isDriver = ride.driver_id === userId;
+      if (!isPassenger && !isDriver) throw new HttpError(403, "No puedes cancelar este pedido.");
+      if (["COMPLETED", "CANCELLED", "EXPIRED"].includes(String(ride.status))) throw new HttpError(400, "El pedido ya termin\xF3.");
+      if (ride.status === "IN_PROGRESS") throw new HttpError(400, "El pedido ya est\xE1 en camino; contacta a soporte.");
+      await conn.execute(
+        `UPDATE rides SET status = 'CANCELLED', solicitude_status = 'CANCELLED', cancelled_by = ?, cancel_reason = ? WHERE id = ?`,
+        [userId, cleanText(reason, 255) ?? null, rideId]
+      );
+      await conn.execute(`UPDATE assignments SET status = 'CANCELLED', responded_at = NOW(3) WHERE ride_id = ? AND status = 'OFFERED'`, [rideId]);
+      if (ride.driver_id) {
+        await conn.execute(`UPDATE drivers_online SET status = 'AVAILABLE', current_ride_id = NULL WHERE driver_id = ?`, [ride.driver_id]);
+      }
+      await event(conn, rideId, isPassenger ? "SOLICITANTE" : "MOTORIZADO", userId, "RIDE_CANCELLED");
+      const [rows] = await conn.query("SELECT * FROM rides WHERE id = ?", [rideId]);
+      return toRideView(rows[0]);
+    });
   }
 };
 
-// server/controllers/ride.controller.ts
-var requestRide = async (req, res) => {
-  try {
-    const userId = req.user.uid;
-    const payload = req.body.quote ? req.body : req.body.rideData || req.body;
-    if (!payload.passengerId) {
-      payload.passengerId = userId;
-    }
-    if (payload.passengerId !== userId) {
-      return res.status(403).json({
-        success: false,
-        message: "Violaci\xF3n de identidad Zero-Trust: passengerId no coincide con el token de autenticaci\xF3n."
-      });
-    }
-    const ride = await RideService.requestRide(payload, userId);
-    const statusCode = ride._idempotent ? 200 : 201;
-    return res.status(statusCode).json({
-      success: true,
-      rideId: ride.id,
-      ride
+// server/services/driver.service.ts
+var validCoord = (lat, lng) => {
+  const a = Number(lat);
+  const b = Number(lng);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a < -90 || a > 90 || b < -180 || b > 180) {
+    throw new HttpError(400, "Ubicaci\xF3n GPS inv\xE1lida.");
+  }
+  return { lat: a, lng: b };
+};
+var DriverService = class {
+  /**
+   * Conectarse (AVAILABLE), seguir conectado con GPS nuevo, o desconectarse (OFFLINE).
+   * Solo motorizados aprobados y no suspendidos pueden conectarse.
+   */
+  static async updatePresence(driverId, input) {
+    const { lat, lng } = validCoord(input.lat, input.lng);
+    const wantsOnline = input.online !== false;
+    const heading = Number.isFinite(Number(input.heading)) ? Math.round(Number(input.heading)) : null;
+    const speed = Number.isFinite(Number(input.speedKmh)) ? Number(Number(input.speedKmh).toFixed(1)) : null;
+    return withTransaction(async (conn) => {
+      const [prof] = await conn.query(
+        `SELECT p.status, p.suspended_until > NOW(3) AS suspended, u.is_blocked
+         FROM driver_profiles p JOIN users u ON u.id = p.user_id WHERE p.user_id = ?`,
+        [driverId]
+      );
+      const p = prof[0];
+      if (!p) throw new HttpError(403, "Tu cuenta no es de motorizado.");
+      if (wantsOnline) {
+        if (p.is_blocked) throw new HttpError(403, "Tu cuenta est\xE1 bloqueada.");
+        if (p.status !== "APPROVED") throw new HttpError(403, "Tus documentos a\xFAn no est\xE1n aprobados.");
+        if (Number(p.suspended)) throw new HttpError(403, "Tu cuenta est\xE1 suspendida temporalmente.");
+      }
+      const [cur] = await conn.query("SELECT status, current_ride_id FROM drivers_online WHERE driver_id = ? FOR UPDATE", [driverId]);
+      const busy = cur[0]?.status === "BUSY";
+      if (!wantsOnline && busy) throw new HttpError(409, "Termina tu pedido antes de desconectarte.");
+      const status = busy ? "BUSY" : wantsOnline ? "AVAILABLE" : "OFFLINE";
+      await conn.execute(
+        `INSERT INTO drivers_online (driver_id, status, lat, lng, heading, speed_kmh, last_active)
+         VALUES (?, ?, ?, ?, ?, ?, NOW(3))
+         ON DUPLICATE KEY UPDATE status = VALUES(status), lat = VALUES(lat), lng = VALUES(lng),
+           heading = VALUES(heading), speed_kmh = VALUES(speed_kmh), last_active = NOW(3)`,
+        [driverId, status, lat, lng, heading, speed]
+      );
+      await conn.execute("UPDATE driver_profiles SET availability = ?, last_connection = NOW(3) WHERE user_id = ?", [status === "OFFLINE" ? 0 : 1, driverId]);
+      if (busy && cur[0]?.current_ride_id) {
+        await conn.execute("UPDATE rides SET driver_lat = ?, driver_lng = ? WHERE id = ? AND driver_id = ?", [lat, lng, cur[0].current_ride_id, driverId]);
+      }
+      return { status };
     });
-  } catch (error) {
-    const status = error.statusCode || 500;
-    return res.status(status).json({
-      success: false,
-      message: error.message || "Error interno al procesar solicitud de viaje."
-    });
   }
-};
-var acceptRide = async (req, res) => {
-  try {
-    const driverId = req.user.uid;
-    const { rideId } = req.params;
-    const { driverLocation, driverName } = req.body;
-    const ride = await RideService.acceptRide(rideId, driverId, driverName, driverLocation);
-    const statusCode = ride._idempotent ? 200 : 200;
-    return res.status(statusCode).json({ success: true, ride });
-  } catch (error) {
-    const status = error.statusCode || 500;
-    return res.status(status).json({ success: false, message: error.message || "Error al aceptar viaje." });
-  }
-};
-var cancelRide = async (req, res) => {
-  try {
-    const userId = req.user.uid;
-    const { rideId } = req.params;
-    await RideService.cancelRide(rideId, userId);
-    return res.status(200).json({ success: true, message: "Viaje cancelado exitosamente." });
-  } catch (error) {
-    const status = error.statusCode || 500;
-    return res.status(status).json({ success: false, message: error.message || "Error al cancelar viaje." });
-  }
-};
-var updateRideStatus = async (req, res) => {
-  try {
-    const driverId = req.user.uid;
-    const { rideId } = req.params;
-    const { status } = req.body;
-    await RideService.updateRideStatus(rideId, driverId, status);
-    return res.status(200).json({ success: true, message: "Estado actualizado." });
-  } catch (error) {
-    const status = error.statusCode || 500;
-    return res.status(status).json({ success: false, message: error.message || "Error al actualizar estado." });
-  }
-};
-var verifyOtp = async (req, res) => {
-  try {
-    const driverId = req.user.uid;
-    const { rideId } = req.params;
-    const { otp } = req.body;
-    if (!otp) {
-      return res.status(400).json({ success: false, message: "Debe proporcionar el c\xF3digo OTP de seguridad." });
-    }
-    const result = await RideService.verifyOtp(rideId, driverId, otp);
-    return res.status(200).json(result);
-  } catch (error) {
-    const status = error.statusCode || 500;
-    return res.status(status).json({ success: false, message: error.message || "Error al validar c\xF3digo OTP." });
-  }
-};
-var getPassengerOtp = async (req, res) => {
-  try {
-    const passengerId = req.user.uid;
-    const { rideId } = req.params;
-    const result = await RideService.getPassengerOtp(rideId, passengerId);
-    return res.status(200).json({ success: true, ...result });
-  } catch (error) {
-    const status = error.statusCode || 500;
-    return res.status(status).json({ success: false, message: error.message || "Error al consultar c\xF3digo OTP." });
+  /** La oferta vigente para este motorizado (o null). También empuja el despacho por si el temporizador durmió. */
+  static async getCurrentOffer(driverId) {
+    await DispatchService.sweep();
+    const [rows] = await getPool().query(
+      `SELECT a.id AS assignment_id, a.ride_id, a.distance_km,
+              GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(3), a.expires_at)) AS secs,
+              r.protected_price, r.origin_address, r.origin_lat, r.origin_lng,
+              r.destination_address, r.destination_lat, r.destination_lng, r.distance_km AS trip_km, r.payment_method
+       FROM assignments a JOIN rides r ON r.id = a.ride_id
+       WHERE a.driver_id = ? AND a.status = 'OFFERED' AND a.expires_at > NOW(3) AND r.status = 'SEARCHING_DRIVER'
+       ORDER BY a.assigned_at DESC LIMIT 1`,
+      [driverId]
+    );
+    const r = rows[0];
+    if (!r) return null;
+    return {
+      assignmentId: String(r.assignment_id),
+      rideId: String(r.ride_id),
+      expiresInSeconds: Number(r.secs),
+      distanceToPickupKm: Number(r.distance_km),
+      price: Number(r.protected_price),
+      origin: { address: String(r.origin_address), lat: Number(r.origin_lat), lng: Number(r.origin_lng) },
+      destination: { address: String(r.destination_address), lat: Number(r.destination_lat), lng: Number(r.destination_lng) },
+      tripDistanceKm: r.trip_km !== null ? Number(r.trip_km) : null,
+      paymentMethod: String(r.payment_method)
+    };
   }
 };
 
 // server/routes/ride.routes.ts
 var router3 = (0, import_express3.Router)();
-router3.post("/request", requireAuth, requestRide);
-router3.post("/:rideId/accept", requireAuth, acceptRide);
-router3.post("/:rideId/cancel", requireAuth, cancelRide);
-router3.post("/:rideId/status", requireAuth, updateRideStatus);
-router3.post("/:rideId/verify-otp", requireAuth, verifyOtp);
-router3.get("/:rideId/otp", requireAuth, getPassengerOtp);
+router3.use(requireSession);
+var uid = (req) => req.session?.sub || "";
+var isAdmin = (req) => req.session?.adm === true;
+var handle = (fn, okStatus = 200) => async (req, res) => {
+  try {
+    const data = await fn(req);
+    res.status(okStatus).json({ success: true, ...data && typeof data === "object" ? data : {} });
+  } catch (err) {
+    if (err instanceof HttpError) return res.status(err.statusCode).json({ success: false, message: err.message });
+    console.error("[RIDES] Error inesperado:", err);
+    res.status(500).json({ success: false, message: "Error del servidor. Intenta de nuevo." });
+  }
+};
+router3.post("/request", requireAppRole(["passenger", "driver"]), handle(async (req) => {
+  const r = await RideService.requestRide({
+    quote: req.body?.quote,
+    passengerId: uid(req),
+    paymentMethod: req.body?.paymentMethod,
+    idempotencyKey: req.body?.idempotencyKey,
+    delivery: req.body?.delivery
+  });
+  return { ride: r.ride, otpCode: r.otpCode, idempotent: r.idempotent };
+}, 201));
+router3.get("/active", handle(async (req) => ({ ride: await RideService.getActiveRide(uid(req)) })));
+router3.post("/driver/presence", requireAppRole(["driver"]), handle((req) => DriverService.updatePresence(uid(req), {
+  lat: req.body?.lat,
+  lng: req.body?.lng,
+  online: req.body?.online,
+  heading: req.body?.heading,
+  speedKmh: req.body?.speedKmh
+})));
+router3.get("/driver/offer", requireAppRole(["driver"]), handle(async (req) => ({ offer: await DriverService.getCurrentOffer(uid(req)) })));
+router3.post("/driver/offers/:assignmentId/accept", requireAppRole(["driver"]), handle(async (req) => ({
+  ride: await RideService.acceptOffer(req.params.assignmentId, uid(req))
+})));
+router3.post("/driver/offers/:assignmentId/reject", requireAppRole(["driver"]), handle(async (req) => {
+  await RideService.rejectOffer(req.params.assignmentId, uid(req));
+  return {};
+}));
+router3.post("/:rideId/status", requireAppRole(["driver"]), handle(async (req) => ({
+  ride: await RideService.updateStatus(req.params.rideId, uid(req), String(req.body?.status || ""))
+})));
+router3.post("/:rideId/verify-otp", requireAppRole(["driver"]), handle(async (req) => ({
+  ride: await RideService.verifyOtp(req.params.rideId, uid(req), req.body?.code)
+})));
+router3.get("/:rideId", handle(async (req) => ({ ride: await RideService.getRide(req.params.rideId, uid(req), isAdmin(req)) })));
+router3.post("/:rideId/cancel", handle(async (req) => ({
+  ride: await RideService.cancelRide(req.params.rideId, uid(req), req.body?.reason)
+})));
 var ride_routes_default = router3;
 
 // server/routes/wallet.routes.ts
 var import_express4 = require("express");
 
 // server/services/wallet.service.ts
-var import_firestore6 = require("firebase-admin/firestore");
+var import_firestore4 = require("firebase-admin/firestore");
 var WalletService = {
   // Initialize wallet V2 for any user (passenger or driver)
   getOrCreateWallet: async (userId) => {
@@ -1865,14 +2014,14 @@ var WalletService = {
         type: "topup_yape",
         amount: verifiedAmount,
         description: `Recarga verificada v\xEDa Yape (${topupData.referenceCode})`,
-        createdAt: import_firestore6.Timestamp.now(),
+        createdAt: import_firestore4.Timestamp.now(),
         referenceId: topupId
       };
       const updatedWallet = {
         ...currentWallet,
         availableBalance: newAvailableBalance,
         digitalBalance: newAvailableBalance,
-        updatedAt: import_firestore6.FieldValue.serverTimestamp(),
+        updatedAt: import_firestore4.FieldValue.serverTimestamp(),
         movements: [newMov, ...(currentWallet.movements || []).slice(0, 49)]
       };
       transaction.set(processedRef, {
@@ -1882,7 +2031,7 @@ var WalletService = {
         driverId,
         amount: verifiedAmount,
         operatorId,
-        creditedAt: import_firestore6.FieldValue.serverTimestamp()
+        creditedAt: import_firestore4.FieldValue.serverTimestamp()
       });
       const creditedTimestamp = (/* @__PURE__ */ new Date()).toISOString();
       const newAuditEntry = {
@@ -1905,7 +2054,7 @@ var WalletService = {
         creditedTxId: txId,
         finalBalanceSnapshot: newAvailableBalance,
         updatedAt: creditedTimestamp,
-        auditHistory: import_firestore6.FieldValue.arrayUnion(newAuditEntry)
+        auditHistory: import_firestore4.FieldValue.arrayUnion(newAuditEntry)
       });
       transaction.update(userRef, {
         wallet: updatedWallet
@@ -1916,7 +2065,7 @@ var WalletService = {
         topupId,
         referenceCode: topupData.referenceCode,
         creditedBy: operatorId,
-        createdAt: import_firestore6.FieldValue.serverTimestamp()
+        createdAt: import_firestore4.FieldValue.serverTimestamp()
       });
       const ledgerRef = db.collection("accounting_ledger").doc(txId);
       transaction.set(ledgerRef, {
@@ -1929,7 +2078,7 @@ var WalletService = {
         referenceCode: topupData.referenceCode,
         topupId,
         operatorId,
-        createdAt: import_firestore6.FieldValue.serverTimestamp()
+        createdAt: import_firestore4.FieldValue.serverTimestamp()
       });
       return {
         success: true,
@@ -1960,7 +2109,7 @@ var WalletService = {
       type: "withdrawal",
       amount,
       description: `Retiro procesado a: ${bankDetails}`,
-      createdAt: import_firestore6.Timestamp.now()
+      createdAt: import_firestore4.Timestamp.now()
     };
     const updatedWallet = {
       ...currentWallet,
@@ -1980,8 +2129,8 @@ var walletController = {
   getOrCreateWallet: async (req, res) => {
     try {
       const { userId } = req.body;
-      const uid = req.user.uid;
-      if (uid !== userId) {
+      const uid2 = req.user.uid;
+      if (uid2 !== userId) {
         return res.status(403).json({ success: false, message: "Forbidden" });
       }
       const wallet = await WalletService.getOrCreateWallet(userId);
@@ -1999,8 +2148,8 @@ var walletController = {
   withdrawFunds: async (req, res) => {
     try {
       const { userId, amount, bankDetails } = req.body;
-      const uid = req.user.uid;
-      if (uid !== userId) {
+      const uid2 = req.user.uid;
+      if (uid2 !== userId) {
         return res.status(403).json({ success: false, message: "Forbidden" });
       }
       const wallet = await WalletService.withdrawFunds(userId, amount, bankDetails);
@@ -2026,21 +2175,21 @@ var wallet_routes_default = router4;
 
 // server/routes/audit.routes.ts
 var import_express5 = require("express");
-var import_firestore7 = require("firebase-admin/firestore");
+var import_firestore5 = require("firebase-admin/firestore");
 var router5 = (0, import_express5.Router)();
 router5.post("/log", requireAuth, async (req, res) => {
   try {
     const record = req.body;
     if (!db) throw new Error("Base de datos no disponible.");
-    const uid = req.user.uid;
-    if (record.actorId !== uid) {
-      record.actorId = uid;
+    const uid2 = req.user.uid;
+    if (record.actorId !== uid2) {
+      record.actorId = uid2;
     }
     const auditRef = db.collection("audit_logs").doc();
     await auditRef.set({
       ...record,
       id: auditRef.id,
-      timestamp: import_firestore7.FieldValue.serverTimestamp(),
+      timestamp: import_firestore5.FieldValue.serverTimestamp(),
       environment: "production-sandbox"
     });
     return res.json({ success: true, id: auditRef.id });
@@ -2071,7 +2220,7 @@ var ledger_routes_default = router6;
 var import_express7 = require("express");
 
 // server/services/topup.service.ts
-var import_firestore8 = require("firebase-admin/firestore");
+var import_firestore6 = require("firebase-admin/firestore");
 
 // server/services/reconciliation.service.ts
 var ReconciliationService = {
@@ -2249,8 +2398,8 @@ var TopupService = {
     };
     await db.collection("topup_requests").doc(topupId).set({
       ...newTopup,
-      createdAtServer: import_firestore8.FieldValue.serverTimestamp(),
-      updatedAtServer: import_firestore8.FieldValue.serverTimestamp()
+      createdAtServer: import_firestore6.FieldValue.serverTimestamp(),
+      updatedAtServer: import_firestore6.FieldValue.serverTimestamp()
     });
     return newTopup;
   },
@@ -2321,7 +2470,7 @@ var TopupService = {
       receiptUrl: receiptUrl || null,
       status: "RECEIPT_SUBMITTED",
       updatedAt: nowIso,
-      auditHistory: import_firestore8.FieldValue.arrayUnion(submitAudit)
+      auditHistory: import_firestore6.FieldValue.arrayUnion(submitAudit)
     });
     const updatedSnap = await topupRef.get();
     return updatedSnap.data();
@@ -2369,7 +2518,7 @@ var TopupService = {
           operatorId,
           matchedTopupId: topupId,
           confirmedAt: (/* @__PURE__ */ new Date()).toISOString(),
-          createdAtServer: import_firestore8.FieldValue.serverTimestamp()
+          createdAtServer: import_firestore6.FieldValue.serverTimestamp()
         }, { merge: true });
       });
     }
@@ -2393,7 +2542,7 @@ var TopupService = {
       bankMovementId: movementDocId,
       status: reconciliation.status,
       updatedAt: nowIso,
-      auditHistory: import_firestore8.FieldValue.arrayUnion(reconciliationAudit)
+      auditHistory: import_firestore6.FieldValue.arrayUnion(reconciliationAudit)
     });
     const updatedSnap = await topupRef.get();
     return updatedSnap.data();
@@ -2434,7 +2583,7 @@ var TopupService = {
       updatedAt: nowIso,
       "reconciliation.status": "VERIFIED",
       "reconciliation.notes": `Aprobado manualmente por operador ${operatorId}: ${operatorNotes}`,
-      auditHistory: import_firestore8.FieldValue.arrayUnion(approvedAudit)
+      auditHistory: import_firestore6.FieldValue.arrayUnion(approvedAudit)
     });
     const updatedSnap = await topupRef.get();
     return updatedSnap.data();
@@ -2465,7 +2614,7 @@ var TopupService = {
       updatedAt: nowIso,
       "reconciliation.status": "REJECTED",
       "reconciliation.notes": reason,
-      auditHistory: import_firestore8.FieldValue.arrayUnion(rejectAudit)
+      auditHistory: import_firestore6.FieldValue.arrayUnion(rejectAudit)
     });
     const updatedSnap = await topupRef.get();
     return updatedSnap.data();
@@ -2753,8 +2902,8 @@ router8.post("/send", requireAuth, async (req, res) => {
       });
     }
     const isSelf = recipientUserId === callerUid;
-    const isAdmin = req.user?.role === "admin";
-    if (!isSelf && !isAdmin) {
+    const isAdmin2 = req.user?.role === "admin";
+    if (!isSelf && !isAdmin2) {
       if (!rideId) {
         return res.status(403).json({
           success: false,
@@ -2823,449 +2972,71 @@ var notification_routes_default = router8;
 // server/routes/pricing.routes.ts
 var import_express9 = require("express");
 var router9 = (0, import_express9.Router)();
-router9.post("/quote", requireAuth, async (req, res) => {
+router9.use(requireSession);
+var KM_PER_DEG_LAT2 = 111.32;
+var localDemandSupply = async (lat, lng) => {
+  const radiusKm = await getNumberSetting("dispatch_max_km", 6);
+  const freshSeconds = await getNumberSetting("driver_fresh_seconds", 120);
+  const dLat = radiusKm / KM_PER_DEG_LAT2;
+  const dLng = radiusKm / (KM_PER_DEG_LAT2 * Math.max(0.1, Math.cos(lat * Math.PI / 180)));
+  const box = [lat - dLat, lat + dLat, lng - dLng, lng + dLng];
+  const [demand] = await getPool().query(
+    `SELECT COUNT(*) AS n FROM rides WHERE status = 'SEARCHING_DRIVER'
+     AND origin_lat BETWEEN ? AND ? AND origin_lng BETWEEN ? AND ?`,
+    box
+  );
+  const [supply] = await getPool().query(
+    `SELECT COUNT(*) AS n FROM drivers_online WHERE status = 'AVAILABLE'
+     AND last_active > NOW(3) - INTERVAL ? SECOND
+     AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?`,
+    [freshSeconds, ...box]
+  );
+  return { pendingOrders: Number(demand[0]?.n || 0) + 1, availableDrivers: Number(supply[0]?.n || 0) };
+};
+router9.post("/quote", async (req, res) => {
+  const b = req.body || {};
+  const nums = [b.originLat, b.originLng, b.destLat, b.destLng].map(Number);
+  const [oLat, oLng, dLat, dLng] = nums;
+  if (nums.some((n) => !Number.isFinite(n)) || Math.abs(oLat) > 90 || Math.abs(dLat) > 90 || Math.abs(oLng) > 180 || Math.abs(dLng) > 180) {
+    return res.status(400).json({ success: false, message: "Ubicaciones inv\xE1lidas." });
+  }
+  if (typeof b.originAddress !== "string" || !b.originAddress.trim() || typeof b.destAddress !== "string" || !b.destAddress.trim()) {
+    return res.status(400).json({ success: false, message: "Escribe la direcci\xF3n de recojo y de entrega." });
+  }
   try {
-    const {
-      originLat,
-      originLng,
-      destLat,
-      destLng,
-      originAddress,
-      destAddress,
-      durationMin
-    } = req.body;
-    if (typeof originLat !== "number" || isNaN(originLat) || typeof originLng !== "number" || isNaN(originLng) || typeof destLat !== "number" || isNaN(destLat) || typeof destLng !== "number" || isNaN(destLng)) {
-      return res.status(400).json({
-        success: false,
-        message: "Coordenadas geogr\xE1ficas inv\xE1lidas o ausentes."
-      });
-    }
-    if (originLat < -90 || originLat > 90 || destLat < -90 || destLat > 90 || originLng < -180 || originLng > 180 || destLng < -180 || destLng > 180) {
-      return res.status(400).json({
-        success: false,
-        message: "Coordenadas geogr\xE1ficas fuera del rango terrestre permitido."
-      });
-    }
-    if (!originAddress || typeof originAddress !== "string" || !destAddress || typeof destAddress !== "string") {
-      return res.status(400).json({
-        success: false,
-        message: "Las direcciones de origen y destino son obligatorias."
-      });
-    }
-    let pendingOrders = 1;
-    let availableDrivers = 1;
-    if (db) {
-      try {
-        const geoScope = resolveCityFromCoordinates(originLat, originLng, originAddress.trim());
-        const targetCity = geoScope.city;
-        const demandPlan = buildDemandQueryFilters(originLat, originLng, originAddress.trim());
-        const pendingSnap = await db.collection(demandPlan.collection).where(demandPlan.scopeFilter.field, demandPlan.scopeFilter.operator, demandPlan.scopeFilter.value).where(demandPlan.statusFilter.field, demandPlan.statusFilter.operator, demandPlan.statusFilter.value).get();
-        const rawRides = [];
-        pendingSnap.forEach((docSnap) => {
-          rawRides.push({ id: docSnap.id, ...docSnap.data() });
-        });
-        const supplyPlan = buildSupplyQueryFilters(originLat, originLng, originAddress.trim());
-        const onlineSnap = await db.collection(supplyPlan.collection).where(supplyPlan.scopeFilter.field, supplyPlan.scopeFilter.operator, supplyPlan.scopeFilter.value).where(supplyPlan.statusFilter.field, supplyPlan.statusFilter.operator, supplyPlan.statusFilter.value).get();
-        const rawDrivers = [];
-        onlineSnap.forEach((docSnap) => {
-          rawDrivers.push({ id: docSnap.id, ...docSnap.data() });
-        });
-        if (rawDrivers.length === 0 && geoScope.isKnownCity) {
-          const usersSnap = await db.collection("users").where("driverProfile.availability", "==", true).where("driverProfile.city", "==", targetCity).get();
-          usersSnap.forEach((docSnap) => {
-            rawDrivers.push({ id: docSnap.id, ...docSnap.data() });
-          });
-        }
-        const localAssessment = filterLocalDemandAndSupply(
-          originLat,
-          originLng,
-          originAddress.trim(),
-          rawRides,
-          rawDrivers
-        );
-        pendingOrders = localAssessment.pendingOrders;
-        availableDrivers = localAssessment.availableDrivers;
-        console.log(`[PRICING_ROUTES] \xC1mbito: ${localAssessment.city} (${localAssessment.marketZone.id}) | Demanda Acotada: ${pendingOrders} | Oferta Acotada: ${availableDrivers}`);
-      } catch (dbErr) {
-        console.warn("[PRICING_ROUTES] Fallback de conteo demanda/oferta local:", dbErr);
-        pendingOrders = 1;
-        availableDrivers = 1;
-      }
-    }
+    const { pendingOrders, availableDrivers } = await localDemandSupply(oLat, oLng);
     const quote = await calculateServerQuote({
-      originLat,
-      originLng,
-      destLat,
-      destLng,
-      originAddress: originAddress.trim(),
-      destAddress: destAddress.trim(),
-      durationMin: typeof durationMin === "number" ? durationMin : void 0,
+      originLat: oLat,
+      originLng: oLng,
+      destLat: dLat,
+      destLng: dLng,
+      originAddress: b.originAddress.trim().slice(0, 255),
+      destAddress: b.destAddress.trim().slice(0, 255),
       pendingOrders,
       availableDrivers
     });
-    return res.status(200).json({
-      success: true,
-      quote
-    });
-  } catch (error) {
-    console.error("[PRICING_ROUTES] Error al calcular cotizaci\xF3n:", error);
-    const message = error?.message || "Error interno del servidor al procesar la cotizaci\xF3n.";
-    const statusCode = message.includes("Google Routes") || message.includes("Inconsistencia") ? 502 : 400;
-    return res.status(statusCode).json({
+    return res.json({ success: true, quote });
+  } catch (err) {
+    const msg = err.message || "";
+    console.error("[PRICING] Error:", msg);
+    const isRoute = /Google|Routes|ruta|Coordenadas/i.test(msg);
+    return res.status(isRoute ? 502 : 500).json({
       success: false,
-      message
+      message: isRoute ? "No pudimos calcular la ruta. Intenta de nuevo." : "Error del servidor. Intenta de nuevo."
     });
   }
 });
-router9.post("/verify", requireAuth, async (req, res) => {
-  try {
-    const { quote } = req.body;
-    if (!quote) {
-      return res.status(400).json({ success: false, message: "Objeto de cotizaci\xF3n requerido." });
-    }
-    const verification = verifyQuoteSignature(quote);
-    if (!verification.valid) {
-      return res.status(400).json({ success: false, reason: verification.reason });
-    }
-    return res.status(200).json({ success: true, valid: true });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error?.message || "Error al verificar cotizaci\xF3n." });
-  }
+router9.post("/verify", (req, res) => {
+  const quote = req.body?.quote;
+  if (!quote) return res.status(400).json({ success: false, message: "Falta la cotizaci\xF3n." });
+  const v = verifyQuoteSignature(quote);
+  return v.valid ? res.json({ success: true, valid: true }) : res.status(400).json({ success: false, valid: false, reason: v.reason });
 });
 var pricing_routes_default = router9;
 
 // server/routes/auth.routes.ts
 var import_express10 = require("express");
 var import_express_rate_limit4 = __toESM(require("express-rate-limit"), 1);
-
-// server/services/auth.service.ts
-var import_crypto3 = __toESM(require("crypto"), 1);
-var import_fs = __toESM(require("fs"), 1);
-var import_path = __toESM(require("path"), 1);
-var import_bcryptjs = __toESM(require("bcryptjs"), 1);
-var import_jsonwebtoken = __toESM(require("jsonwebtoken"), 1);
-
-// server/config/mysql.ts
-var import_promise = __toESM(require("mysql2/promise"), 1);
-var pool = null;
-var getPool = () => {
-  if (pool) return pool;
-  const { DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME } = process.env;
-  if (!DB_USER || !DB_PASSWORD || !DB_NAME) {
-    throw new Error("Faltan variables DB_USER, DB_PASSWORD o DB_NAME para conectar a MySQL.");
-  }
-  pool = import_promise.default.createPool({
-    host: DB_HOST || "localhost",
-    port: DB_PORT ? parseInt(DB_PORT, 10) : 3306,
-    user: DB_USER,
-    password: DB_PASSWORD,
-    database: DB_NAME,
-    waitForConnections: true,
-    connectionLimit: 8,
-    timezone: "Z",
-    charset: "utf8mb4",
-    dateStrings: false
-  });
-  return pool;
-};
-var withTransaction = async (fn) => {
-  const conn = await getPool().getConnection();
-  try {
-    await conn.beginTransaction();
-    const result = await fn(conn);
-    await conn.commit();
-    return result;
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    conn.release();
-  }
-};
-
-// server/services/sms.service.ts
-var ConsoleSms = class {
-  async send(phoneE164, text) {
-    console.error(`[SMS-PRUEBA] a ${phoneE164}: ${text}`);
-  }
-};
-var sender = null;
-var getSmsSender = () => {
-  if (sender) return sender;
-  const provider = (process.env.SMS_PROVIDER || "console").toLowerCase();
-  switch (provider) {
-    case "console":
-      sender = new ConsoleSms();
-      break;
-    default:
-      throw new Error(`Proveedor de SMS no soportado: ${provider}`);
-  }
-  return sender;
-};
-
-// server/services/auth.service.ts
-var AuthError = class extends Error {
-  constructor(statusCode, message) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-};
-var OTP_TTL_MIN = 5;
-var OTP_MAX_ATTEMPTS = 5;
-var OTP_MAX_PER_15MIN = 3;
-var OTP_MAX_PER_DAY = 6;
-var ACCESS_TTL = "1h";
-var REFRESH_TTL_DAYS = 30;
-var MIN_PASSWORD = 6;
-var cachedSecret = null;
-var jwtSecret = () => {
-  if (cachedSecret) return cachedSecret;
-  let s = process.env.JWT_SECRET;
-  const file = process.env.JWT_SECRET_FILE;
-  if (!s && file) {
-    if (!import_fs.default.existsSync(file)) {
-      import_fs.default.mkdirSync(import_path.default.dirname(file), { recursive: true, mode: 448 });
-      import_fs.default.writeFileSync(file, import_crypto3.default.randomBytes(64).toString("base64url"), { mode: 384, flag: "wx" });
-    }
-    s = import_fs.default.readFileSync(file, "utf8").trim();
-  }
-  if (!s || s.length < 32) throw new Error("Falta JWT_SECRET (o JWT_SECRET_FILE) de al menos 32 caracteres.");
-  cachedSecret = s;
-  return s;
-};
-var sha256 = (v) => import_crypto3.default.createHash("sha256").update(v).digest("hex");
-var hashOtp2 = (phone, purpose, code) => sha256(`${jwtSecret()}|${phone}|${purpose}|${code}`);
-var normalizePhone = (raw) => {
-  if (typeof raw !== "string") throw new AuthError(400, "N\xFAmero de celular inv\xE1lido.");
-  let d = raw.replace(/\D/g, "");
-  if (d.length === 11 && d.startsWith("51")) d = d.slice(2);
-  if (!/^9\d{8}$/.test(d)) throw new AuthError(400, "El celular debe tener 9 d\xEDgitos y empezar con 9.");
-  return `+51${d}`;
-};
-var validatePassword = (p) => {
-  if (typeof p !== "string" || p.length < MIN_PASSWORD) {
-    throw new AuthError(400, `La clave debe tener al menos ${MIN_PASSWORD} caracteres.`);
-  }
-  if (p.length > 72) throw new AuthError(400, "La clave es demasiado larga.");
-  return p;
-};
-var validateName = (n) => {
-  if (typeof n !== "string" || n.trim().length < 3) throw new AuthError(400, "Escribe tu nombre completo.");
-  return n.trim().slice(0, 150);
-};
-var validateRole = (r) => {
-  if (r === "driver" || r === "MOTORIZADO") return "driver";
-  if (r === "passenger" || r === "CLIENTE" || r === void 0) return "passenger";
-  throw new AuthError(400, "Rol inv\xE1lido.");
-};
-var toPublic = (u) => ({
-  id: u.id,
-  fullName: u.full_name,
-  phone: u.phone,
-  role: u.role,
-  isAdmin: u.is_admin === 1,
-  kycStatus: u.kyc_status
-});
-var issueOtp = async (phone, purpose) => {
-  const pool2 = getPool();
-  const [rows] = await pool2.query(
-    `SELECT
-       SUM(created_at > NOW(3) - INTERVAL 15 MINUTE) AS last15,
-       COUNT(*) AS lastDay
-     FROM otp_codes WHERE phone = ? AND created_at > NOW(3) - INTERVAL 1 DAY`,
-    [phone]
-  );
-  const last15 = Number(rows[0]?.last15 || 0);
-  const lastDay = Number(rows[0]?.lastDay || 0);
-  if (last15 >= OTP_MAX_PER_15MIN || lastDay >= OTP_MAX_PER_DAY) {
-    throw new AuthError(429, "Pediste muchos c\xF3digos. Espera unos minutos e int\xE9ntalo de nuevo.");
-  }
-  const code = import_crypto3.default.randomInt(0, 1e6).toString().padStart(6, "0");
-  await pool2.execute(
-    `INSERT INTO otp_codes (phone, purpose, code_hash, expires_at)
-     VALUES (?, ?, ?, NOW(3) + INTERVAL ${OTP_TTL_MIN} MINUTE)`,
-    [phone, purpose, hashOtp2(phone, purpose, code)]
-  );
-  await getSmsSender().send(phone, `Zenith: tu codigo es ${code}. Vence en ${OTP_TTL_MIN} minutos. No lo compartas.`);
-};
-var consumeOtp = async (conn, phone, purpose, code) => {
-  if (typeof code !== "string" || !/^\d{6}$/.test(code)) throw new AuthError(400, "El c\xF3digo tiene 6 n\xFAmeros.");
-  const [rows] = await conn.query(
-    `SELECT id, code_hash, attempts FROM otp_codes
-     WHERE phone = ? AND purpose = ? AND used_at IS NULL AND expires_at > NOW(3)
-     ORDER BY id DESC LIMIT 1 FOR UPDATE`,
-    [phone, purpose]
-  );
-  const otp = rows[0];
-  if (!otp) throw new AuthError(400, "El c\xF3digo venci\xF3 o no existe. Pide uno nuevo.");
-  if (Number(otp.attempts) >= OTP_MAX_ATTEMPTS) throw new AuthError(429, "Demasiados intentos. Pide un c\xF3digo nuevo.");
-  const expected = Buffer.from(String(otp.code_hash), "hex");
-  const given = Buffer.from(hashOtp2(phone, purpose, code), "hex");
-  if (!import_crypto3.default.timingSafeEqual(expected, given)) {
-    await conn.execute("UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?", [otp.id]);
-    throw new AuthError(400, "C\xF3digo incorrecto.");
-  }
-  await conn.execute("UPDATE otp_codes SET used_at = NOW(3) WHERE id = ?", [otp.id]);
-};
-var createSession = async (conn, user, deviceInfo) => {
-  const claims = { sub: user.id, role: user.role, adm: user.is_admin === 1 };
-  const accessToken = import_jsonwebtoken.default.sign(claims, jwtSecret(), { expiresIn: ACCESS_TTL, issuer: "zenith" });
-  const refreshToken = import_crypto3.default.randomBytes(48).toString("base64url");
-  const exec = conn ?? getPool();
-  await exec.execute(
-    `INSERT INTO refresh_tokens (user_id, token_hash, device_info, expires_at)
-     VALUES (?, ?, ?, NOW(3) + INTERVAL ${REFRESH_TTL_DAYS} DAY)`,
-    [user.id, sha256(refreshToken), deviceInfo ? deviceInfo.slice(0, 255) : null]
-  );
-  return { accessToken, refreshToken, expiresIn: 3600, user: toPublic(user) };
-};
-var verifyAccessToken = (token) => {
-  try {
-    const decoded = import_jsonwebtoken.default.verify(token, jwtSecret(), { issuer: "zenith" });
-    if (typeof decoded === "string" || typeof decoded.sub !== "string") throw new Error("token");
-    return { sub: decoded.sub, role: decoded.role, adm: decoded.adm === true };
-  } catch {
-    throw new AuthError(401, "Sesi\xF3n vencida. Vuelve a entrar.");
-  }
-};
-var findByPhone = async (exec, phone, lock = false) => {
-  const [rows] = await exec.query(
-    `SELECT id, full_name, phone, password_hash, role, is_admin, is_blocked, phone_verified, kyc_status
-     FROM users WHERE phone = ? LIMIT 1${lock ? " FOR UPDATE" : ""}`,
-    [phone]
-  );
-  return rows[0];
-};
-var startRegistration = async (rawPhone) => {
-  const phone = normalizePhone(rawPhone);
-  const existing = await findByPhone(getPool(), phone);
-  if (existing) throw new AuthError(409, "Este celular ya tiene cuenta. Entra con tu clave.");
-  await issueOtp(phone, "VERIFY_PHONE");
-};
-var completeRegistration = async (input) => {
-  const phone = normalizePhone(input.phone);
-  const password = validatePassword(input.password);
-  const fullName = validateName(input.fullName);
-  const role = validateRole(input.role);
-  const passwordHash = await import_bcryptjs.default.hash(password, 10);
-  return withTransaction(async (conn) => {
-    await consumeOtp(conn, phone, "VERIFY_PHONE", input.code);
-    if (await findByPhone(conn, phone, true)) throw new AuthError(409, "Este celular ya tiene cuenta.");
-    const id = import_crypto3.default.randomUUID();
-    const roleLabel = role === "driver" ? "MOTORIZADO" : "CLIENTE";
-    await conn.execute(
-      `INSERT INTO users (id, full_name, phone, password_hash, role, roles_enabled, active_role, phone_verified)
-       VALUES (?, ?, ?, ?, ?, JSON_ARRAY(?), ?, 1)`,
-      [id, fullName, phone, passwordHash, role, roleLabel, roleLabel]
-    );
-    if (role === "driver") {
-      await conn.execute("INSERT INTO driver_profiles (user_id) VALUES (?)", [id]);
-      await conn.execute("INSERT INTO wallets (driver_id) VALUES (?)", [id]);
-    }
-    await conn.execute(
-      `INSERT INTO audit_logs (actor_id, actor_role, action, target_type, target_id) VALUES (?, ?, 'USER_REGISTERED', 'user', ?)`,
-      [id, role, id]
-    );
-    const user = await findByPhone(conn, phone);
-    if (!user) throw new AuthError(500, "No se pudo crear la cuenta.");
-    return createSession(conn, user, input.deviceInfo);
-  });
-};
-var login = async (input) => {
-  const phone = normalizePhone(input.phone);
-  if (typeof input.password !== "string") throw new AuthError(400, "Escribe tu clave.");
-  const user = await findByPhone(getPool(), phone);
-  const ok = user?.password_hash ? await import_bcryptjs.default.compare(input.password, user.password_hash) : false;
-  if (!user || !ok) throw new AuthError(401, "Celular o clave incorrectos.");
-  if (user.is_blocked === 1) throw new AuthError(403, "Tu cuenta est\xE1 bloqueada. Escribe a soporte.");
-  return createSession(null, user, input.deviceInfo);
-};
-var refreshSession = async (rawToken) => {
-  if (typeof rawToken !== "string" || rawToken.length < 20) throw new AuthError(401, "Sesi\xF3n inv\xE1lida.");
-  const [reused] = await getPool().query(
-    "SELECT user_id FROM refresh_tokens WHERE token_hash = ? AND revoked_at IS NOT NULL",
-    [sha256(rawToken)]
-  );
-  if (reused[0]) {
-    await getPool().execute(
-      "UPDATE refresh_tokens SET revoked_at = NOW(3) WHERE user_id = ? AND revoked_at IS NULL",
-      [reused[0].user_id]
-    );
-    throw new AuthError(401, "Sesi\xF3n cerrada por seguridad. Vuelve a entrar.");
-  }
-  return withTransaction(async (conn) => {
-    const [rows] = await conn.query(
-      `SELECT id, user_id, device_info, revoked_at, expires_at > NOW(3) AS alive
-       FROM refresh_tokens WHERE token_hash = ? FOR UPDATE`,
-      [sha256(rawToken)]
-    );
-    const rt = rows[0];
-    if (!rt) throw new AuthError(401, "Sesi\xF3n inv\xE1lida.");
-    if (rt.revoked_at) throw new AuthError(401, "Sesi\xF3n cerrada por seguridad. Vuelve a entrar.");
-    if (!Number(rt.alive)) throw new AuthError(401, "Sesi\xF3n vencida. Vuelve a entrar.");
-    await conn.execute("UPDATE refresh_tokens SET revoked_at = NOW(3) WHERE id = ?", [rt.id]);
-    const [urows] = await conn.query(
-      `SELECT id, full_name, phone, password_hash, role, is_admin, is_blocked, phone_verified, kyc_status
-       FROM users WHERE id = ?`,
-      [rt.user_id]
-    );
-    const user = urows[0];
-    if (!user || user.is_blocked === 1) throw new AuthError(403, "Cuenta no disponible.");
-    return createSession(conn, user, rt.device_info ?? void 0);
-  });
-};
-var logout = async (rawToken) => {
-  if (typeof rawToken !== "string") return;
-  await getPool().execute("UPDATE refresh_tokens SET revoked_at = NOW(3) WHERE token_hash = ? AND revoked_at IS NULL", [sha256(rawToken)]);
-};
-var startPasswordReset = async (rawPhone) => {
-  const phone = normalizePhone(rawPhone);
-  const user = await findByPhone(getPool(), phone);
-  if (!user || user.is_blocked === 1) return;
-  await issueOtp(phone, "RESET_PASSWORD");
-};
-var completePasswordReset = async (input) => {
-  const phone = normalizePhone(input.phone);
-  const password = validatePassword(input.newPassword);
-  const passwordHash = await import_bcryptjs.default.hash(password, 10);
-  return withTransaction(async (conn) => {
-    await consumeOtp(conn, phone, "RESET_PASSWORD", input.code);
-    const user = await findByPhone(conn, phone, true);
-    if (!user) throw new AuthError(400, "C\xF3digo incorrecto.");
-    await conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", [passwordHash, user.id]);
-    await conn.execute("UPDATE refresh_tokens SET revoked_at = NOW(3) WHERE user_id = ? AND revoked_at IS NULL", [user.id]);
-    await conn.execute(
-      `INSERT INTO audit_logs (actor_id, actor_role, action, target_type, target_id) VALUES (?, ?, 'PASSWORD_RESET', 'user', ?)`,
-      [user.id, user.role, user.id]
-    );
-    return createSession(conn, user, input.deviceInfo);
-  });
-};
-var getUserById = async (id) => {
-  const [rows] = await getPool().query(
-    `SELECT id, full_name, phone, password_hash, role, is_admin, is_blocked, phone_verified, kyc_status
-     FROM users WHERE id = ?`,
-    [id]
-  );
-  return rows[0] ? toPublic(rows[0]) : null;
-};
-
-// server/middlewares/session.middleware.ts
-var requireSession = (req, res, next) => {
-  const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) {
-    return res.status(401).json({ success: false, message: "Debes iniciar sesi\xF3n." });
-  }
-  try {
-    req.session = verifyAccessToken(header.slice(7));
-    next();
-  } catch (err) {
-    const status = err instanceof AuthError ? err.statusCode : 401;
-    return res.status(status).json({ success: false, message: err.message });
-  }
-};
-
-// server/routes/auth.routes.ts
 var router10 = (0, import_express10.Router)();
 var authLimiter = (0, import_express_rate_limit4.default)({
   windowMs: 15 * 60 * 1e3,
@@ -3276,7 +3047,7 @@ var authLimiter = (0, import_express_rate_limit4.default)({
 });
 router10.use(authLimiter);
 var device = (req) => String(req.headers["user-agent"] || "").slice(0, 255);
-var handle = (fn) => async (req, res) => {
+var handle2 = (fn) => async (req, res) => {
   try {
     const data = await fn(req);
     res.json({ success: true, ...data && typeof data === "object" ? data : {} });
@@ -3288,11 +3059,11 @@ var handle = (fn) => async (req, res) => {
     res.status(500).json({ success: false, message: "Error del servidor. Intenta de nuevo." });
   }
 };
-router10.post("/register/start", handle(async (req) => {
+router10.post("/register/start", handle2(async (req) => {
   await startRegistration(req.body?.phone);
   return { message: "Te enviamos un c\xF3digo por SMS." };
 }));
-router10.post("/register/verify", handle((req) => completeRegistration({
+router10.post("/register/verify", handle2((req) => completeRegistration({
   phone: req.body?.phone,
   code: req.body?.code,
   password: req.body?.password,
@@ -3300,27 +3071,27 @@ router10.post("/register/verify", handle((req) => completeRegistration({
   role: req.body?.role,
   deviceInfo: device(req)
 })));
-router10.post("/login", handle((req) => login({
+router10.post("/login", handle2((req) => login({
   phone: req.body?.phone,
   password: req.body?.password,
   deviceInfo: device(req)
 })));
-router10.post("/refresh", handle((req) => refreshSession(req.body?.refreshToken)));
-router10.post("/logout", handle(async (req) => {
+router10.post("/refresh", handle2((req) => refreshSession(req.body?.refreshToken)));
+router10.post("/logout", handle2(async (req) => {
   await logout(req.body?.refreshToken);
   return {};
 }));
-router10.post("/password/forgot", handle(async (req) => {
+router10.post("/password/forgot", handle2(async (req) => {
   await startPasswordReset(req.body?.phone);
   return { message: "Si el celular est\xE1 registrado, te llegar\xE1 un c\xF3digo por SMS." };
 }));
-router10.post("/password/reset", handle((req) => completePasswordReset({
+router10.post("/password/reset", handle2((req) => completePasswordReset({
   phone: req.body?.phone,
   code: req.body?.code,
   newPassword: req.body?.newPassword,
   deviceInfo: device(req)
 })));
-router10.get("/me", requireSession, handle(async (req) => {
+router10.get("/me", requireSession, handle2(async (req) => {
   const sub = req.session?.sub;
   const user = sub ? await getUserById(sub) : null;
   if (!user) throw new AuthError(404, "Cuenta no encontrada.");
@@ -3381,6 +3152,7 @@ async function startServer() {
       res.sendFile(import_path2.default.join(distPath, "index.html"));
     });
   }
+  if (process.env.DB_NAME) DispatchService.startSweeper();
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Z\xE9nith Backend Server running on http://localhost:${PORT}`);
   });
