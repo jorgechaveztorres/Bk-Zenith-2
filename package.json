@@ -22,7 +22,8 @@
     "test:concurrency": "firebase emulators:exec --project gen-lang-client-0838883154 --only auth,firestore,storage \"FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9199 npx tsx scripts/concurrency-sandbox-runner.ts\"",
     "test:settlement": "npx firebase-tools@15.32.1 emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx scripts/test-ride-settlement.ts\"",
     "test:financial-reconciliation": "npx firebase-tools@15.32.1 emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx scripts/test-financial-reconciliation.ts\"",
-    "test:topup": "npx firebase-tools@15.32.1 emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx test/topup-v1-suite.ts\""
+    "test:topup": "npx firebase-tools@15.32.1 emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx test/topup-v1-suite.ts\"",
+    "test:auth": "tsx scripts/test-auth-mysql.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",
@@ -35,6 +36,7 @@
     "@tailwindcss/vite": "^4.1.14",
     "@vis.gl/react-google-maps": "^1.8.3",
     "@vitejs/plugin-react": "^5.0.4",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
@@ -42,16 +44,20 @@
     "firebase": "^12.13.0",
     "firebase-admin": "^14.2.0",
     "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "mysql2": "^3.24.6",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "vite": "^6.2.3"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.2",
+    "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.28.1",

@@ -1,7 +1,12 @@
 import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { Express } from 'express';
+import { Express, Request, Response, NextFunction, RequestHandler } from 'express';
+
+// Aplica el límite también cuando la app vive bajo una subcarpeta (BASE_PATH), ej. /zenith-api/api/...
+const onPath = (segment: string, handler: RequestHandler) =>
+  (req: Request, res: Response, next: NextFunction) =>
+    req.path.includes(segment) ? handler(req, res, next) : next();
 
 export const configureSecurity = (app: Express) => {
   // 1. HTTP Security Headers
@@ -30,7 +35,7 @@ export const configureSecurity = (app: Express) => {
     legacyHeaders: false,
     message: { success: false, message: 'Demasiadas solicitudes, intente de nuevo más tarde.' }
   });
-  app.use('/api', limiter);
+  app.use(onPath('/api/', limiter));
   
   // Specific stricter rate limiter for sensitive endpoints like payments
   const paymentLimiter = rateLimit({
@@ -38,6 +43,6 @@ export const configureSecurity = (app: Express) => {
     max: 10,
     message: { success: false, message: 'Límite de intentos de pago excedido.' }
   });
-  app.use('/api/payments', paymentLimiter);
-  app.use('/api/settlements', paymentLimiter);
+  app.use(onPath('/api/payments', paymentLimiter));
+  app.use(onPath('/api/settlements', paymentLimiter));
 };

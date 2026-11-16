@@ -8,9 +8,11 @@ import ledgerRoutes from './ledger.routes';
 import topupRoutes from './topup.routes';
 import notificationRoutes from './notification.routes';
 import pricingRoutes from './pricing.routes';
+import authRoutes from './auth.routes';
 
 const router = Router();
 
+router.use('/auth', authRoutes);
 router.use('/payments', paymentRoutes);
 router.use('/settlements', settlementRoutes);
 router.use('/rides', rideRoutes);
