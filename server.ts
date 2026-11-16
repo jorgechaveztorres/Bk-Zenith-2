@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import { createApp } from "./server/app";
+import { DispatchService } from "./server/services/dispatch.service";
 
 async function startServer() {
   const app = createApp();
@@ -27,6 +28,9 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+  // Barrido de despacho (ofertas vencidas -> siguiente motorizado). Solo si hay MySQL configurado.
+  if (process.env.DB_NAME) DispatchService.startSweeper();
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Zénith Backend Server running on http://localhost:${PORT}`);

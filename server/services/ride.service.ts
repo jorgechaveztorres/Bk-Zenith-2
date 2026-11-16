@@ -1,578 +1,379 @@
-import { db } from '../config/firebase';
-import { FieldValue } from 'firebase-admin/firestore';
+/**
+ * ZÉNITH — PEDIDOS (MySQL)
+ *
+ * Ciclo de vida:
+ *   SEARCHING_DRIVER -> (motorizado acepta oferta) DRIVER_ASSIGNED -> DRIVER_ARRIVING
+ *   -> WAITING_FOR_OTP -> (código correcto) IN_PROGRESS -> COMPLETED
+ *   En cualquier punto antes de terminar: CANCELLED. Sin aceptación a tiempo: EXPIRED.
+ */
 import crypto from 'crypto';
-import { verifyQuoteSignature } from './pricing.service';
+import type { PoolConnection, RowDataPacket } from 'mysql2/promise';
+import { getPool, withTransaction } from '../config/mysql';
+import { verifyQuoteSignature, ServerQuoteResult } from './pricing.service';
 import { resolveCityFromCoordinates } from './geo.service';
 import { DispatchService } from './dispatch.service';
+import { getNumberSetting } from './settings.service';
+import { HttpError } from './http-error';
 
-const OTP_SECRET = process.env.OTP_SECRET || 'ZENITH_SECURE_OTP_SALT_2026';
+export type RideStatus =
+  | 'SEARCHING_DRIVER' | 'DRIVER_ASSIGNED' | 'DRIVER_ARRIVING' | 'WAITING_FOR_OTP'
+  | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'EXPIRED';
 
-export const ALLOWED_STATUS_TRANSITIONS: Record<string, string[]> = {
-  REQUESTED: ['SEARCHING_DRIVER', 'DRIVER_ASSIGNED', 'CANCELLED'],
-  SEARCHING_DRIVER: ['DRIVER_ASSIGNED', 'CANCELLED'],
-  DRIVER_ASSIGNED: ['DRIVER_ARRIVING', 'CANCELLED'],
-  DRIVER_ARRIVING: ['WAITING_FOR_OTP', 'CANCELLED'],
-  WAITING_FOR_OTP: ['IN_PROGRESS', 'CANCELLED'],
-  IN_PROGRESS: ['COMPLETED', 'CANCELLED'],
-  COMPLETED: [],
-  CANCELLED: []
+/** Cambios que el motorizado puede pedir directamente (IN_PROGRESS solo con código). */
+export const DRIVER_TRANSITIONS: Record<string, RideStatus[]> = {
+  DRIVER_ASSIGNED: ['DRIVER_ARRIVING'],
+  DRIVER_ARRIVING: ['WAITING_FOR_OTP'],
+  IN_PROGRESS: ['COMPLETED'],
 };
 
-export function hashOtp(rideId: string, otpCode: string): string {
-  return crypto.createHmac('sha256', OTP_SECRET).update(`${rideId}:${otpCode}`).digest('hex');
+const OTP_MAX_ATTEMPTS = 3;
+
+const otpSecret = (): string => {
+  const s = process.env.OTP_SECRET;
+  if (!s && process.env.NODE_ENV === 'production') throw new Error('OTP_SECRET no configurado.');
+  return s || 'ZENITH_DEV_OTP_SECRET';
+};
+
+export const hashOtp = (rideId: string, code: string): string =>
+  crypto.createHmac('sha256', otpSecret()).update(`${rideId}:${code}`).digest('hex');
+
+export interface DeliveryDetails {
+  description?: string;
+  receptorName?: string;
+  receptorPhone?: string;
+  notes?: string;
 }
 
-export interface CreateRidePayload {
-  quote: {
-    quoteId: string;
-    pricingVersion: string;
-    totalFare: number;
-    normalFare: number;
-    multiplier: number;
-    distance: number;
-    duration?: number;
-    origin: {
-      address: string;
-      lat: number;
-      lng: number;
-    };
-    destination: {
-      address: string;
-      lat: number;
-      lng: number;
-    };
-    currency: string;
-    expiresAt: string;
-    pricingSeal: string;
-    marketZone?: any;
-    pressure?: number;
-    status?: string;
-  };
+export interface RequestRideInput {
+  quote: ServerQuoteResult;
   passengerId: string;
-  passengerName?: string;
-  passengerPhone?: string;
   paymentMethod?: string;
-  paymentState?: string;
-  paymentId?: string;
   idempotencyKey?: string;
-  orderType?: 'RIDE' | 'DELIVERY';
-  packageInfo?: any;
-  receptor?: any;
-  pagador?: any;
-  solicitante?: any;
-  evidenceLevel?: any;
-  returnContingency?: any;
+  delivery?: DeliveryDetails;
 }
 
-export interface CreatedRideResult {
+export interface RideView {
   id: string;
-  _idempotent: boolean;
-  [key: string]: any;
+  status: RideStatus;
+  passengerId: string;
+  passengerName: string | null;
+  driverId: string | null;
+  driverName: string | null;
+  driverPhone: string | null;
+  origin: { address: string; lat: number; lng: number };
+  destination: { address: string; lat: number; lng: number };
+  driverLocation: { lat: number; lng: number } | null;
+  price: number;
+  distanceKm: number | null;
+  paymentMethod: string;
+  delivery: DeliveryDetails | null;
+  createdAt: string;
+  acceptedAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
 }
+
+const toNum = (v: unknown): number => Number(v);
+const toIso = (v: unknown): string | null => (v instanceof Date ? v.toISOString() : v ? String(v) : null);
+const parseJson = <T>(v: unknown): T | null => {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'string') {
+    try { return JSON.parse(v) as T; } catch { return null; }
+  }
+  return v as T;
+};
+
+export const toRideView = (r: RowDataPacket): RideView => ({
+  id: String(r.id),
+  status: r.status as RideStatus,
+  passengerId: String(r.passenger_id),
+  passengerName: r.passenger_name ?? null,
+  driverId: r.driver_id ?? null,
+  driverName: r.driver_name ?? null,
+  driverPhone: r.driver_phone ?? null,
+  origin: { address: String(r.origin_address), lat: toNum(r.origin_lat), lng: toNum(r.origin_lng) },
+  destination: { address: String(r.destination_address), lat: toNum(r.destination_lat), lng: toNum(r.destination_lng) },
+  driverLocation: r.driver_lat !== null && r.driver_lat !== undefined ? { lat: toNum(r.driver_lat), lng: toNum(r.driver_lng) } : null,
+  price: toNum(r.protected_price),
+  distanceKm: r.distance_km !== null ? toNum(r.distance_km) : null,
+  paymentMethod: String(r.payment_method),
+  delivery: parseJson<DeliveryDetails>(r.package_info),
+  createdAt: toIso(r.created_at) || '',
+  acceptedAt: toIso(r.accepted_at),
+  startedAt: toIso(r.started_at),
+  completedAt: toIso(r.completed_at),
+});
+
+const lockRide = async (conn: PoolConnection, rideId: string): Promise<RowDataPacket> => {
+  const [rows] = await conn.query<RowDataPacket[]>(
+    'SELECT *, (otp_expires_at IS NOT NULL AND otp_expires_at <= NOW(3)) AS otp_expired FROM rides WHERE id = ? FOR UPDATE', [rideId]
+  );
+  if (!rows[0]) throw new HttpError(404, 'Pedido no encontrado.');
+  return rows[0];
+};
+
+const event = async (
+  conn: PoolConnection, rideId: string, actorRole: 'SOLICITANTE' | 'MOTORIZADO' | 'SYSTEM',
+  actorId: string, action: string, result = 'OK'
+) => {
+  await conn.execute(
+    'INSERT INTO operational_events (ride_id, actor_role, actor_id, action, result) VALUES (?, ?, ?, ?, ?)',
+    [rideId, actorRole, actorId, action, result]
+  );
+};
+
+const cleanText = (v: unknown, max: number): string | undefined =>
+  typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined;
 
 export class RideService {
-  /**
-   * GATEKEEPER SERVER-SIDE: Creación de viajes y órdenes de entrega.
-   * Valida identidad contra JWT, verifica la firma criptográfica HMAC del quote,
-   * controla idempotencia y persiste el documento en Firestore con Firebase Admin SDK.
-   */
-  static async requestRide(payload: CreateRidePayload, authenticatedUid: string): Promise<CreatedRideResult> {
-    if (!db) {
-      throw new Error('Servicio de base de datos Firestore no disponible en backend.');
-    }
+  /** El cliente confirma la cotización firmada y se crea el pedido. */
+  static async requestRide(input: RequestRideInput): Promise<{ ride: RideView; otpCode: string; idempotent: boolean }> {
+    const { quote } = input;
+    if (!quote || typeof quote !== 'object') throw new HttpError(400, 'Falta la cotización.');
 
-    if (!payload || !payload.quote) {
-      throw new Error('El payload debe contener un objeto de cotización (quote) válido emitido por el servidor.');
-    }
+    const check = verifyQuoteSignature(quote);
+    if (!check.valid) throw new HttpError(400, `Cotización no válida: ${check.reason}. Vuelve a cotizar.`);
 
-    // 1. Regla de Identidad Zero-Trust: auth.uid === passengerId
-    if (payload.passengerId !== authenticatedUid) {
-      const error: any = new Error('Violación de identidad Zero-Trust: passengerId no coincide con el token autenticado.');
-      error.statusCode = 403;
-      throw error;
-    }
-
-    const { quote } = payload;
-
-    // 2. Validación criptográfica y temporal del Quote DPE V2
-    const verification = verifyQuoteSignature(quote);
-    if (!verification.valid) {
-      const error: any = new Error(`Cotización rechazada por el Gatekeeper: ${verification.reason}`);
-      error.statusCode = 400;
-      throw error;
-    }
-
-    // 3. Verificación de congruencia de moneda
-    if (quote.currency !== 'PEN') {
-      const error: any = new Error('Moneda no autorizada para operación en Zénith (solo PEN).');
-      error.statusCode = 400;
-      throw error;
-    }
-
-    // 4. Mecanismo de Idempotencia y Hash de Carga Útil (Payload Hash)
-    const idempotencyKey = payload.idempotencyKey?.trim() || quote.quoteId;
-
+    const paymentMethod = ['cash', 'yape', 'plin'].includes(String(input.paymentMethod)) ? String(input.paymentMethod) : 'cash';
+    const idemKey = (cleanText(input.idempotencyKey, 120) || quote.quoteId).slice(0, 120);
     const payloadHash = crypto.createHash('sha256')
-      .update(JSON.stringify({
-        passengerId: authenticatedUid,
-        quoteId: quote.quoteId,
-        origin: {
-          address: (quote.origin?.address || '').trim(),
-          lat: Number(quote.origin?.lat !== undefined ? Number(quote.origin.lat).toFixed(5) : 0),
-          lng: Number(quote.origin?.lng !== undefined ? Number(quote.origin.lng).toFixed(5) : 0)
-        },
-        destination: {
-          address: (quote.destination?.address || '').trim(),
-          lat: Number(quote.destination?.lat !== undefined ? Number(quote.destination.lat).toFixed(5) : 0),
-          lng: Number(quote.destination?.lng !== undefined ? Number(quote.destination.lng).toFixed(5) : 0)
-        },
-        totalFare: Number(quote.totalFare.toFixed(2)),
-        currency: quote.currency || 'PEN',
-        pricingVersion: quote.pricingVersion
-      }))
+      .update(JSON.stringify({ p: input.passengerId, q: quote.quoteId, f: quote.totalFare.toFixed(2) }))
       .digest('hex');
 
-    const idempotencyRef = db.collection('idempotency_keys').doc(idempotencyKey);
+    const delivery: DeliveryDetails | null = input.delivery ? {
+      description: cleanText(input.delivery.description, 300),
+      receptorName: cleanText(input.delivery.receptorName, 150),
+      receptorPhone: cleanText(input.delivery.receptorPhone, 20),
+      notes: cleanText(input.delivery.notes, 300),
+    } : null;
 
-    // 5. Creación Atómica bajo Transacción en Firestore (Anti-Race Conditions & Concurrent Idempotency)
-    const createdRide = await db.runTransaction(async (transaction) => {
-      const idempDoc = await transaction.get(idempotencyRef);
+    const searchSeconds = await getNumberSetting('search_timeout_seconds', 300);
+    const otpMinutes = await getNumberSetting('pickup_otp_minutes', 60);
 
-      if (idempDoc.exists) {
-        const existingKeyData = idempDoc.data()!;
-
-        // FASE G: Misma clave con diferente payload -> RECHAZAR CONFLICTO (HTTP 409)
-        if (existingKeyData.payloadHash !== payloadHash) {
-          const conflictErr: any = new Error(
-            'Conflicto de Idempotencia: La clave ya fue utilizada para una solicitud con parámetros diferentes.'
-          );
-          conflictErr.statusCode = 409;
-          throw conflictErr;
-        }
-
-        // Misma clave con mismo payload (Retry / Concurrencia) -> Devolver el viaje existente sin duplicación
-        const existingRideRef = db.collection('rides').doc(existingKeyData.rideId);
-        const existingRideDoc = await transaction.get(existingRideRef);
-
-        if (existingRideDoc.exists) {
-          console.log(`[RIDE_GATEKEEPER] Idempotencia atómica activada para key: ${idempotencyKey}. Retornando viaje existente ${existingKeyData.rideId}.`);
-          return {
-            id: existingKeyData.rideId,
-            ...existingRideDoc.data(),
-            _idempotent: true
-          };
-        }
+    const result = await withTransaction(async (conn) => {
+      const [idem] = await conn.query<RowDataPacket[]>(
+        'SELECT resource_id, payload_hash FROM idempotency_keys WHERE idem_key = ? FOR UPDATE', [idemKey]
+      );
+      if (idem[0]) {
+        if (idem[0].payload_hash !== payloadHash) throw new HttpError(409, 'Esta cotización ya se usó para otro pedido.');
+        const [rows] = await conn.query<RowDataPacket[]>('SELECT * FROM rides WHERE id = ?', [idem[0].resource_id]);
+        if (!rows[0]) throw new HttpError(409, 'Pedido no disponible.');
+        return { ride: toRideView(rows[0]), otpCode: String(rows[0].otp_code || ''), idempotent: true };
       }
 
-      // Si no existe, crear atómicamente el ride y el registro de idempotencia
-      const newRideRef = db.collection('rides').doc();
-      const rideId = newRideRef.id;
+      // Un cliente no puede tener dos pedidos activos a la vez.
+      const [active] = await conn.query<RowDataPacket[]>(
+        `SELECT id FROM rides WHERE passenger_id = ?
+         AND status IN ('SEARCHING_DRIVER','DRIVER_ASSIGNED','DRIVER_ARRIVING','WAITING_FOR_OTP','IN_PROGRESS') LIMIT 1`,
+        [input.passengerId]
+      );
+      if (active[0]) throw new HttpError(409, 'Ya tienes un pedido en curso.');
 
-      // Generación Segura de OTP Criptográfico Server-Side (3 dígitos: 100-999)
-      const otpCode = crypto.randomInt(100, 1000).toString();
-      const otpHash = hashOtp(rideId, otpCode);
+      const [users] = await conn.query<RowDataPacket[]>('SELECT full_name, phone, is_blocked FROM users WHERE id = ?', [input.passengerId]);
+      const user = users[0];
+      if (!user || user.is_blocked) throw new HttpError(403, 'Cuenta no disponible.');
 
-      const rideDocument: Record<string, any> = {
-        id: rideId,
-        idempotencyKey,
-        passengerId: authenticatedUid,
-        passengerName: payload.passengerName?.trim() || 'Pasajero Zénith',
-        passengerPhone: payload.passengerPhone?.trim() || '',
-        origin: {
-          address: quote.origin.address,
-          lat: quote.origin.lat,
-          lng: quote.origin.lng
-        },
-        destination: {
-          address: quote.destination.address,
-          lat: quote.destination.lat,
-          lng: quote.destination.lng
-        },
-        city: quote.marketZone?.city || (quote.origin ? resolveCityFromCoordinates(quote.origin.lat, quote.origin.lng, quote.origin.address).city : 'Perú'),
-        marketZoneId: quote.marketZone?.id || null,
-        gridKey: quote.marketZone?.gridKey || null,
-        // AUTORIDAD TOTAL DEL BACKEND SOBRE PRECIOS
-        protectedPrice: quote.totalFare,
-        finalPrice: quote.totalFare,
-        basePrice: quote.normalFare,
-        multiplier: quote.multiplier,
-        marketPressure: quote.pressure ?? 1.0,
-        distance: quote.distance,
-        duration: quote.duration ?? 0,
-        currency: 'PEN',
-        quoteId: quote.quoteId,
-        pricingSeal: quote.pricingSeal,
-        pricingVersion: quote.pricingVersion,
-        paymentMethod: payload.paymentMethod || 'cash',
-        paymentState: payload.paymentState || 'AUTHORIZED',
-        paymentId: payload.paymentId || `tx_${Date.now()}`,
-        status: 'SEARCHING_DRIVER',
-        // Generación Segura de OTP Criptográfico Server-Side
-        otpHash,
-        otpAttempts: 0,
-        otpMaxAttempts: 3,
-        otpExpiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-        otpVerified: false,
-        passengerOtp: otpCode,
-        createdAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp()
-      };
+      const rideId = crypto.randomUUID();
+      const otpCode = crypto.randomInt(1000, 10000).toString();
+      const city = quote.marketZone?.city || resolveCityFromCoordinates(quote.origin.lat, quote.origin.lng, quote.origin.address).city;
 
-      // Campos operacionales si es entrega / paquetería
-      if (payload.orderType === 'DELIVERY' || payload.packageInfo) {
-        rideDocument.orderType = 'DELIVERY';
-        if (payload.packageInfo) rideDocument.packageInfo = payload.packageInfo;
-        if (payload.receptor) rideDocument.receptor = payload.receptor;
-        if (payload.pagador) rideDocument.pagador = payload.pagador;
-        if (payload.solicitante) rideDocument.solicitante = payload.solicitante;
-        if (payload.evidenceLevel) rideDocument.evidenceLevel = payload.evidenceLevel;
-        if (payload.returnContingency) rideDocument.returnContingency = payload.returnContingency;
-      }
-
-      transaction.set(newRideRef, rideDocument);
-      transaction.set(idempotencyRef, {
-        idempotencyKey,
-        rideId,
-        payloadHash,
-        passengerId: authenticatedUid,
-        createdAt: FieldValue.serverTimestamp()
-      });
-
-      console.log(`[RIDE_GATEKEEPER] Viaje ${rideId} creado atómicamente con tarifa inmutable S/ ${quote.totalFare.toFixed(2)}.`);
-      return {
-        id: rideId,
-        ...rideDocument,
-        _idempotent: false
-      };
+      await conn.execute(
+        `INSERT INTO rides (
+           id, passenger_id, passenger_name, passenger_phone, status, order_type, city,
+           origin_address, origin_lat, origin_lng, destination_address, destination_lat, destination_lng,
+           distance_km, duration_min, protected_price, normal_fare, multiplier, payment_method,
+           pricing_seal, pricing_version, quote_id, solicitude_status, package_info,
+           otp_code, otp_hash, otp_expires_at, search_expires_at)
+         VALUES (?, ?, ?, ?, 'SEARCHING_DRIVER', 'DELIVERY', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REQUESTED', ?,
+                 ?, ?, NOW(3) + INTERVAL ? MINUTE, NOW(3) + INTERVAL ? SECOND)`,
+        [
+          rideId, input.passengerId, user.full_name, user.phone, city,
+          quote.origin.address.slice(0, 255), quote.origin.lat, quote.origin.lng,
+          quote.destination.address.slice(0, 255), quote.destination.lat, quote.destination.lng,
+          quote.distance, quote.duration ?? null, quote.totalFare, quote.normalFare, quote.multiplier, paymentMethod,
+          quote.pricingSeal, quote.pricingVersion, quote.quoteId, delivery ? JSON.stringify(delivery) : null,
+          otpCode, hashOtp(rideId, otpCode), otpMinutes, searchSeconds,
+        ]
+      );
+      await conn.execute(
+        `INSERT INTO idempotency_keys (idem_key, user_id, scope, resource_id, payload_hash) VALUES (?, ?, 'RIDE_REQUEST', ?, ?)`,
+        [idemKey, input.passengerId, rideId, payloadHash]
+      );
+      await event(conn, rideId, 'SOLICITANTE', input.passengerId, 'RIDE_REQUESTED');
+      const [rows] = await conn.query<RowDataPacket[]>('SELECT * FROM rides WHERE id = ?', [rideId]);
+      return { ride: toRideView(rows[0]), otpCode, idempotent: false };
     });
 
-    // Iniciar ciclo de despacho server-side de forma autónoma (sin depender del cliente)
-    if (!createdRide._idempotent) {
-      DispatchService.runDispatchCycle(createdRide.id).catch(err => {
-        console.warn(`[SERVER_DISPATCH] Error iniciando ciclo de despacho para ${createdRide.id}:`, err);
-      });
+    if (!result.idempotent) {
+      DispatchService.runDispatchCycle(result.ride.id).catch((err) =>
+        console.error('[DISPATCH] No se pudo iniciar despacho:', (err as Error).message)
+      );
     }
-
-    return createdRide;
+    return result;
   }
 
-  static async acceptRide(rideId: string, driverId: string, driverName?: string, driverLocation?: any) {
-    if (!db) throw new Error('Base de datos no disponible.');
-
-    const rideRef = db.collection('rides').doc(rideId);
-    const driverPresenceRef = db.collection('drivers_online').doc(driverId);
-
-    return await db.runTransaction(async (transaction) => {
-      const rideDoc = await transaction.get(rideRef);
-      if (!rideDoc.exists) {
-        const err: any = new Error('Viaje no encontrado.');
-        err.statusCode = 404;
-        throw err;
-      }
-
-      const ride = rideDoc.data()!;
-
-      // 1. Idempotencia: Si el viaje ya fue asignado al MISMO conductor (retry seguro)
-      if (ride.status === 'DRIVER_ASSIGNED' && ride.driverId === driverId) {
-        return {
-          id: rideId,
-          ...ride,
-          _idempotent: true
-        };
-      }
-
-      // 2. Conflicto: Si el viaje ya está asignado a otro conductor o cancelado -> HTTP 409
-      if (ride.status !== 'SEARCHING_DRIVER' && ride.status !== 'REQUESTED') {
-        const conflictErr: any = new Error('El viaje ya no está disponible para asignación (asignado a otro conductor o finalizado).');
-        conflictErr.statusCode = 409;
-        throw conflictErr;
-      }
-
-      // 3. Verificar estado del conductor en drivers_online
-      const driverDoc = await transaction.get(driverPresenceRef);
-      if (!driverDoc.exists) {
-        const unavailErr: any = new Error('El conductor no se encuentra conectado a la red de despacho.');
-        unavailErr.statusCode = 400;
-        throw unavailErr;
-      }
-
-      const driverData = driverDoc.data()!;
-      if (driverData.status !== 'AVAILABLE') {
-        const busyErr: any = new Error(`El conductor no está disponible para aceptar viajes (estado actual: ${driverData.status}).`);
-        busyErr.statusCode = 409;
-        throw busyErr;
-      }
-
-      const resolvedDriverName = driverName?.trim() || driverData.driverName || 'Conductor Zénith';
-      const resolvedLocation = driverLocation || (driverData.lat && driverData.lng ? { lat: driverData.lat, lng: driverData.lng } : null);
-
-      const updateData = {
-        status: 'DRIVER_ASSIGNED',
-        driverId,
-        driverName: resolvedDriverName,
-        driverLocation: resolvedLocation,
-        acceptedAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp()
-      };
-
-      // A. Asignación atómica inmutable del viaje
-      transaction.update(rideRef, updateData);
-
-      // B. Conmutación atómica de disponibilidad del conductor: AVAILABLE -> BUSY
-      transaction.update(driverPresenceRef, {
-        status: 'BUSY',
-        currentRideId: rideId,
-        lastActive: FieldValue.serverTimestamp()
-      });
-
-      console.log(`[RIDE_LIFECYCLE] Viaje ${rideId} asignado exitosamente al conductor ${driverId}. Estado de conductor: BUSY.`);
-
-      return {
-        id: rideId,
-        ...ride,
-        ...updateData,
-        _idempotent: false
-      };
-    });
-  }
-
-  static async cancelRide(rideId: string, userId: string) {
-    if (!db) throw new Error('Base de datos no disponible.');
-
-    const rideRef = db.collection('rides').doc(rideId);
-
-    return await db.runTransaction(async (transaction) => {
-      const rideDoc = await transaction.get(rideRef);
-      if (!rideDoc.exists) {
-        const err: any = new Error('Viaje no encontrado.');
-        err.statusCode = 404;
-        throw err;
-      }
-
-      const ride = rideDoc.data();
-
-      // Zero-Trust: Solo pasajero o conductor asignado pueden cancelar
-      if (ride?.passengerId !== userId && ride?.driverId !== userId) {
-        const err: any = new Error('No tienes permiso para cancelar este viaje.');
-        err.statusCode = 403;
-        throw err;
-      }
-
-      if (['COMPLETED', 'CANCELLED'].includes(ride?.status)) {
-        const err: any = new Error('El viaje ya ha finalizado.');
-        err.statusCode = 400;
-        throw err;
-      }
-
-      // Lecturas primero (Firestore Transaction Constraint)
-      let driverSnap: any = null;
-      let driverRef: any = null;
-      if (ride?.driverId) {
-        driverRef = db.collection('drivers_online').doc(ride.driverId);
-        driverSnap = await transaction.get(driverRef);
-      }
-
-      // Escrituras después
-      transaction.update(rideRef, {
-        status: 'CANCELLED',
-        cancelledBy: userId,
-        updatedAt: FieldValue.serverTimestamp()
-      });
-
-      // Si el viaje tenía conductor asignado, liberarlo atómicamente: BUSY -> AVAILABLE
-      if (driverRef && driverSnap && driverSnap.exists) {
-        transaction.update(driverRef, {
-          status: 'AVAILABLE',
-          currentRideId: null,
-          lastActive: FieldValue.serverTimestamp()
-        });
-      }
-    });
-  }
-
-  static async updateRideStatus(rideId: string, driverId: string, status: string) {
-    if (!db) throw new Error('Base de datos no disponible.');
-
-    const rideRef = db.collection('rides').doc(rideId);
-
-    return await db.runTransaction(async (transaction) => {
-      // 1. TODAS LAS LECTURAS PRIMERO (Regla estricta de Firestore Transactions)
-      const rideDoc = await transaction.get(rideRef);
-      if (!rideDoc.exists) {
-        const err: any = new Error('Viaje no encontrado.');
-        err.statusCode = 404;
-        throw err;
-      }
-
-      const ride = rideDoc.data()!;
-
-      if (ride.driverId !== driverId) {
-        const err: any = new Error('No tienes permiso para actualizar este viaje.');
-        err.statusCode = 403;
-        throw err;
-      }
-
-      // Validación estricta de Máquina de Estados (FSM)
-      const currentStatus = ride.status;
-      const allowedNext = ALLOWED_STATUS_TRANSITIONS[currentStatus] || [];
-
-      if (!allowedNext.includes(status)) {
-        const err: any = new Error(`Transición ilegal de '${currentStatus}' a '${status}'.`);
-        err.statusCode = 400;
-        throw err;
-      }
-
-      // El estado IN_PROGRESS no puede ser forzado directamente mediante status; exige validar OTP
-      if (status === 'IN_PROGRESS') {
-        const err: any = new Error('El estado IN_PROGRESS solo puede alcanzarse validando el código OTP mediante /api/rides/:rideId/verify-otp.');
-        err.statusCode = 400;
-        throw err;
-      }
-
-      let driverSnap: any = null;
-      let driverRef: any = null;
-      if (status === 'COMPLETED') {
-        driverRef = db.collection('drivers_online').doc(driverId);
-        driverSnap = await transaction.get(driverRef);
-      }
-
-      // 2. TODAS LAS ESCRITURAS DESPUÉS
-      const updatePayload: Record<string, any> = {
-        status,
-        updatedAt: FieldValue.serverTimestamp()
-      };
-
-      if (status === 'COMPLETED') {
-        updatePayload.completedAt = FieldValue.serverTimestamp();
-      }
-
-      transaction.update(rideRef, updatePayload);
-
-      // Si el viaje se completa, liberar al conductor: BUSY -> AVAILABLE
-      if (status === 'COMPLETED' && driverRef && driverSnap && driverSnap.exists) {
-        transaction.update(driverRef, {
-          status: 'AVAILABLE',
-          currentRideId: null,
-          lastActive: FieldValue.serverTimestamp()
-        });
-      }
-
-      return { success: true, message: `Estado actualizado a ${status}.`, status };
-    });
-  }
-
-  /**
-   * Validador oficial y autoritativo de código de abordaje (OTP).
-   * Exclusivo para el conductor asignado cuando el viaje está en WAITING_FOR_OTP.
-   */
-  static async verifyOtp(rideId: string, driverId: string, inputOtp: string) {
-    if (!db) throw new Error('Base de datos no disponible.');
-
-    const rideRef = db.collection('rides').doc(rideId);
-
-    return await db.runTransaction(async (transaction) => {
-      const rideDoc = await transaction.get(rideRef);
-      if (!rideDoc.exists) {
-        const err: any = new Error('Viaje no encontrado.');
-        err.statusCode = 404;
-        throw err;
-      }
-
-      const ride = rideDoc.data()!;
-
-      // 1. Autorización: Solo el conductor asignado puede validar el código
-      if (ride.driverId !== driverId) {
-        const err: any = new Error('No tienes permiso para validar el código de este viaje.');
-        err.statusCode = 403;
-        throw err;
-      }
-
-      // 2. Estado: El viaje debe estar en WAITING_FOR_OTP
-      if (ride.status !== 'WAITING_FOR_OTP') {
-        const err: any = new Error(`El viaje no se encuentra esperando código OTP (estado actual: ${ride.status}).`);
-        err.statusCode = 400;
-        throw err;
-      }
-
-      // 3. Verificación de consumo previo (Anti-Replay)
-      if (ride.otpVerified) {
-        const err: any = new Error('El código OTP ya fue consumido.');
-        err.statusCode = 400;
-        throw err;
-      }
-
-      // 4. Límite estricto de intentos (Anti-Bruteforce)
-      const currentAttempts = ride.otpAttempts || 0;
-      const maxAttempts = ride.otpMaxAttempts || 3;
-      if (currentAttempts >= maxAttempts) {
-        const err: any = new Error('Límite de intentos de OTP excedido. Por seguridad el abordaje está bloqueado.');
-        err.statusCode = 400;
-        throw err;
-      }
-
-      // 5. Verificación de expiración
-      if (ride.otpExpiresAt && new Date() > new Date(ride.otpExpiresAt)) {
-        const err: any = new Error('El código OTP ha expirado.');
-        err.statusCode = 400;
-        throw err;
-      }
-
-      // 6. Validación de hash criptográfico
-      const inputHash = hashOtp(rideId, (inputOtp || '').trim());
-      if (inputHash !== ride.otpHash) {
-        const nextAttempts = currentAttempts + 1;
-        await rideRef.update({
-          otpAttempts: nextAttempts,
-          updatedAt: FieldValue.serverTimestamp()
-        });
-        const remaining = Math.max(0, maxAttempts - nextAttempts);
-        const err: any = new Error(`Código OTP incorrecto. Intentos restantes: ${remaining}.`);
-        err.statusCode = 400;
-        throw err;
-      }
-
-      // 7. Éxito: Transición atómica WAITING_FOR_OTP -> IN_PROGRESS
-      transaction.update(rideRef, {
-        status: 'IN_PROGRESS',
-        otpVerified: true,
-        startedAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp()
-      });
-
-      console.log(`[RIDE_OTP] Viaje ${rideId} inició su curso exitosamente (OTP verificado por conductor ${driverId}).`);
-
-      return {
-        success: true,
-        message: 'Código de seguridad verificado exitosamente. Viaje iniciado.',
-        status: 'IN_PROGRESS'
-      };
-    });
-  }
-
-  /**
-   * Consulta segura del código OTP de abordaje exclusivamente por el pasajero propietario.
-   */
-  static async getPassengerOtp(rideId: string, passengerId: string) {
-    if (!db) throw new Error('Base de datos no disponible.');
-
-    const rideSnap = await db.collection('rides').doc(rideId).get();
-    if (!rideSnap.exists) {
-      const err: any = new Error('Viaje no encontrado.');
-      err.statusCode = 404;
-      throw err;
+  /** Datos del pedido para cliente o motorizado asignado. */
+  static async getRide(rideId: string, userId: string, isAdmin = false): Promise<RideView & { otpCode?: string }> {
+    const [rows] = await getPool().query<RowDataPacket[]>('SELECT * FROM rides WHERE id = ?', [rideId]);
+    const r = rows[0];
+    if (!r) throw new HttpError(404, 'Pedido no encontrado.');
+    const isPassenger = r.passenger_id === userId;
+    if (!isPassenger && r.driver_id !== userId && !isAdmin) throw new HttpError(403, 'No tienes acceso a este pedido.');
+    const view = toRideView(r);
+    // El código de recojo solo lo ve el cliente, y solo mientras sirve.
+    if (isPassenger && !Number(r.otp_verified) && ['DRIVER_ASSIGNED', 'DRIVER_ARRIVING', 'WAITING_FOR_OTP', 'SEARCHING_DRIVER'].includes(String(r.status))) {
+      return { ...view, otpCode: String(r.otp_code || '') };
     }
+    return view;
+  }
 
-    const ride = rideSnap.data()!;
-    if (ride.passengerId !== passengerId) {
-      const err: any = new Error('No tienes permiso para consultar el código de este viaje.');
-      err.statusCode = 403;
-      throw err;
-    }
+  /** Pedido activo del usuario (cliente o motorizado), para reanudar la pantalla al abrir la app. */
+  static async getActiveRide(userId: string): Promise<RideView | null> {
+    const [rows] = await getPool().query<RowDataPacket[]>(
+      `SELECT * FROM rides WHERE (passenger_id = ? OR driver_id = ?)
+       AND status IN ('SEARCHING_DRIVER','DRIVER_ASSIGNED','DRIVER_ARRIVING','WAITING_FOR_OTP','IN_PROGRESS')
+       ORDER BY created_at DESC LIMIT 1`,
+      [userId, userId]
+    );
+    return rows[0] ? toRideView(rows[0]) : null;
+  }
 
-    return {
-      otpCode: ride.passengerOtp,
-      expiresAt: ride.otpExpiresAt,
-      attemptsRemaining: Math.max(0, (ride.otpMaxAttempts || 3) - (ride.otpAttempts || 0))
-    };
+  /** El motorizado acepta la oferta que se le hizo. */
+  static async acceptOffer(assignmentId: string, driverId: string): Promise<RideView> {
+    return withTransaction(async (conn) => {
+      const [pre] = await conn.query<RowDataPacket[]>('SELECT ride_id, driver_id FROM assignments WHERE id = ?', [assignmentId]);
+      if (!pre[0] || pre[0].driver_id !== driverId) throw new HttpError(404, 'Oferta no encontrada.');
+
+      // Bloquear primero el pedido y recién después releer la oferta: si el motorizado
+      // toca "aceptar" dos veces a la vez, el segundo toque ve el resultado del primero.
+      const ride = await lockRide(conn, String(pre[0].ride_id));
+      const [asg] = await conn.query<RowDataPacket[]>(
+        'SELECT id, status, expires_at > NOW(3) AS alive FROM assignments WHERE id = ? FOR UPDATE', [assignmentId]
+      );
+      const a = asg[0];
+      if (a.status === 'ACCEPTED' && ride.driver_id === driverId) return toRideView(ride); // reintento seguro
+      if (a.status !== 'OFFERED' || !Number(a.alive)) throw new HttpError(409, 'La oferta ya venció.');
+      if (ride.status !== 'SEARCHING_DRIVER') throw new HttpError(409, 'El pedido ya no está disponible.');
+
+      const [drv] = await conn.query<RowDataPacket[]>(
+        `SELECT d.status, u.full_name, u.phone, d.lat, d.lng FROM drivers_online d JOIN users u ON u.id = d.driver_id
+         WHERE d.driver_id = ? FOR UPDATE`, [driverId]
+      );
+      const d = drv[0];
+      if (!d || d.status !== 'AVAILABLE') throw new HttpError(409, 'Debes estar disponible para aceptar.');
+
+      await conn.execute(`UPDATE assignments SET status = 'ACCEPTED', responded_at = NOW(3) WHERE id = ?`, [assignmentId]);
+      await conn.execute(
+        `UPDATE rides SET status = 'DRIVER_ASSIGNED', solicitude_status = 'ASSIGNED', transit_status = 'TO_PICKUP',
+           driver_id = ?, driver_name = ?, driver_phone = ?, driver_lat = ?, driver_lng = ?, accepted_at = NOW(3)
+         WHERE id = ?`,
+        [driverId, d.full_name, d.phone, d.lat, d.lng, ride.id]
+      );
+      await conn.execute(`UPDATE drivers_online SET status = 'BUSY', current_ride_id = ? WHERE driver_id = ?`, [ride.id, driverId]);
+      await conn.execute(
+        `INSERT INTO dispatch_logs (ride_id, driver_id, assignment_id, event, details) VALUES (?, ?, ?, 'ASSIGNMENT_ACCEPTED', 'Aceptado por el motorizado')`,
+        [ride.id, driverId, assignmentId]
+      );
+      await event(conn, String(ride.id), 'MOTORIZADO', driverId, 'OFFER_ACCEPTED');
+      const [rows] = await conn.query<RowDataPacket[]>('SELECT * FROM rides WHERE id = ?', [ride.id]);
+      return toRideView(rows[0]);
+    });
+  }
+
+  /** El motorizado rechaza: se ofrece al siguiente al instante. */
+  static async rejectOffer(assignmentId: string, driverId: string): Promise<void> {
+    const rideId = await withTransaction(async (conn) => {
+      const [asg] = await conn.query<RowDataPacket[]>('SELECT ride_id, driver_id, status FROM assignments WHERE id = ? FOR UPDATE', [assignmentId]);
+      const a = asg[0];
+      if (!a || a.driver_id !== driverId) throw new HttpError(404, 'Oferta no encontrada.');
+      if (a.status !== 'OFFERED') return String(a.ride_id);
+      await conn.execute(`UPDATE assignments SET status = 'REJECTED', responded_at = NOW(3) WHERE id = ?`, [assignmentId]);
+      await conn.execute(
+        `INSERT INTO dispatch_logs (ride_id, driver_id, assignment_id, event, details) VALUES (?, ?, ?, 'ASSIGNMENT_REJECTED', 'Rechazado por el motorizado')`,
+        [a.ride_id, driverId, assignmentId]
+      );
+      return String(a.ride_id);
+    });
+    await DispatchService.runDispatchCycle(rideId);
+  }
+
+  /** Avance del motorizado: en camino -> llegué (pide código) -> entregado. */
+  static async updateStatus(rideId: string, driverId: string, next: string): Promise<RideView> {
+    return withTransaction(async (conn) => {
+      const ride = await lockRide(conn, rideId);
+      if (ride.driver_id !== driverId) throw new HttpError(403, 'Este pedido no es tuyo.');
+      const allowed = DRIVER_TRANSITIONS[String(ride.status)] || [];
+      if (!allowed.includes(next as RideStatus)) {
+        throw new HttpError(400, next === 'IN_PROGRESS'
+          ? 'Para iniciar el viaje debes ingresar el código del cliente.'
+          : `No se puede pasar de ${ride.status} a ${next}.`);
+      }
+      const extra: Record<string, string> = {
+        DRIVER_ARRIVING: ", transit_status = 'TO_PICKUP'",
+        WAITING_FOR_OTP: ", transit_status = 'AT_PICKUP', pickup_arrived_at = NOW(3)",
+        COMPLETED: ", transit_status = 'AT_DESTINATION', solicitude_status = 'COMPLETED', destination_arrived_at = NOW(3), completed_at = NOW(3)",
+      };
+      await conn.execute(`UPDATE rides SET status = ?${extra[next] || ''} WHERE id = ?`, [next, rideId]);
+      if (next === 'COMPLETED') {
+        await conn.execute(`UPDATE drivers_online SET status = 'AVAILABLE', current_ride_id = NULL WHERE driver_id = ?`, [driverId]);
+      }
+      await event(conn, rideId, 'MOTORIZADO', driverId, `STATUS_${next}`);
+      const [rows] = await conn.query<RowDataPacket[]>('SELECT * FROM rides WHERE id = ?', [rideId]);
+      return toRideView(rows[0]);
+    });
+  }
+
+  /** El motorizado ingresa el código que le dicta el cliente. 3 intentos. */
+  static async verifyOtp(rideId: string, driverId: string, code: unknown): Promise<RideView> {
+    const outcome = await withTransaction(async (conn) => {
+      const ride = await lockRide(conn, rideId);
+      if (ride.driver_id !== driverId) throw new HttpError(403, 'Este pedido no es tuyo.');
+      if (ride.status !== 'WAITING_FOR_OTP') throw new HttpError(400, 'Primero marca que llegaste al punto de recojo.');
+      if (Number(ride.otp_attempts) >= OTP_MAX_ATTEMPTS) throw new HttpError(429, 'Código bloqueado por intentos. Contacta a soporte.');
+      if (Number(ride.otp_expired)) throw new HttpError(400, 'El código venció. Contacta a soporte.');
+
+      const given = typeof code === 'string' ? code.trim() : '';
+      const ok = /^\d{4}$/.test(given) &&
+        crypto.timingSafeEqual(Buffer.from(hashOtp(rideId, given), 'hex'), Buffer.from(String(ride.otp_hash), 'hex'));
+      if (!ok) {
+        await conn.execute('UPDATE rides SET otp_attempts = otp_attempts + 1 WHERE id = ?', [rideId]);
+        await event(conn, rideId, 'MOTORIZADO', driverId, 'OTP_CHECK', 'WRONG');
+        return { ok: false as const, left: OTP_MAX_ATTEMPTS - Number(ride.otp_attempts) - 1 };
+      }
+      await conn.execute(
+        `UPDATE rides SET status = 'IN_PROGRESS', otp_verified = 1, transit_status = 'IN_TRANSIT',
+           solicitude_status = 'ACTIVE', started_at = NOW(3), driver_started_trip_at = NOW(3) WHERE id = ?`, [rideId]
+      );
+      await event(conn, rideId, 'MOTORIZADO', driverId, 'OTP_CHECK', 'OK');
+      const [rows] = await conn.query<RowDataPacket[]>('SELECT * FROM rides WHERE id = ?', [rideId]);
+      return { ok: true as const, ride: toRideView(rows[0]) };
+    });
+    // El intento fallido se guarda (fuera del rollback) y luego se informa.
+    if (!outcome.ok) throw new HttpError(400, `Código incorrecto. Te quedan ${Math.max(0, outcome.left)} intentos.`);
+    return outcome.ride;
+  }
+
+  /** Cancelar: el cliente o el motorizado asignado, antes de que termine. */
+  static async cancelRide(rideId: string, userId: string, reason?: string): Promise<RideView> {
+    return withTransaction(async (conn) => {
+      const ride = await lockRide(conn, rideId);
+      const isPassenger = ride.passenger_id === userId;
+      const isDriver = ride.driver_id === userId;
+      if (!isPassenger && !isDriver) throw new HttpError(403, 'No puedes cancelar este pedido.');
+      if (['COMPLETED', 'CANCELLED', 'EXPIRED'].includes(String(ride.status))) throw new HttpError(400, 'El pedido ya terminó.');
+      if (ride.status === 'IN_PROGRESS') throw new HttpError(400, 'El pedido ya está en camino; contacta a soporte.');
+
+      await conn.execute(
+        `UPDATE rides SET status = 'CANCELLED', solicitude_status = 'CANCELLED', cancelled_by = ?, cancel_reason = ? WHERE id = ?`,
+        [userId, cleanText(reason, 255) ?? null, rideId]
+      );
+      await conn.execute(`UPDATE assignments SET status = 'CANCELLED', responded_at = NOW(3) WHERE ride_id = ? AND status = 'OFFERED'`, [rideId]);
+      if (ride.driver_id) {
+        await conn.execute(`UPDATE drivers_online SET status = 'AVAILABLE', current_ride_id = NULL WHERE driver_id = ?`, [ride.driver_id]);
+      }
+      await event(conn, rideId, isPassenger ? 'SOLICITANTE' : 'MOTORIZADO', userId, 'RIDE_CANCELLED');
+      const [rows] = await conn.query<RowDataPacket[]>('SELECT * FROM rides WHERE id = ?', [rideId]);
+      return toRideView(rows[0]);
+    });
   }
 }

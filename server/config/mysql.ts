@@ -26,6 +26,11 @@ export const getPool = (): Pool => {
     charset: 'utf8mb4',
     dateStrings: false,
   });
+  // Toda la app trabaja en UTC: NOW() de la base y las fechas de Node coinciden
+  // aunque el servidor del hosting esté en otra zona horaria.
+  pool.on('connection', (conn) => {
+    conn.query("SET time_zone = '+00:00'");
+  });
   return pool;
 };
 

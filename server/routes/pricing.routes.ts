@@ -1,180 +1,75 @@
-import { Router, Response } from 'express';
-import { requireAuth, AuthenticatedRequest } from '../middlewares/auth.middleware';
-import { db } from '../config/firebase';
-import { calculateServerQuote, verifyQuoteSignature } from '../services/pricing.service';
-import { 
-  filterLocalDemandAndSupply, 
-  resolveCityFromCoordinates,
-  buildDemandQueryFilters,
-  buildSupplyQueryFilters
-} from '../services/geo.service';
+import { Router, Request, Response } from 'express';
+import type { RowDataPacket } from 'mysql2/promise';
+import { requireSession } from '../middlewares/session.middleware';
+import { getPool } from '../config/mysql';
+import { calculateServerQuote, verifyQuoteSignature, ServerQuoteResult } from '../services/pricing.service';
+import { getNumberSetting } from '../services/settings.service';
 
 const router = Router();
+router.use(requireSession);
+
+const KM_PER_DEG_LAT = 111.32;
+
+/** Pedidos esperando y motorizados libres cerca del recojo (para el multiplicador dinámico). */
+const localDemandSupply = async (lat: number, lng: number): Promise<{ pendingOrders: number; availableDrivers: number }> => {
+  const radiusKm = await getNumberSetting('dispatch_max_km', 6);
+  const freshSeconds = await getNumberSetting('driver_fresh_seconds', 120);
+  const dLat = radiusKm / KM_PER_DEG_LAT;
+  const dLng = radiusKm / (KM_PER_DEG_LAT * Math.max(0.1, Math.cos((lat * Math.PI) / 180)));
+  const box = [lat - dLat, lat + dLat, lng - dLng, lng + dLng];
+  const [demand] = await getPool().query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS n FROM rides WHERE status = 'SEARCHING_DRIVER'
+     AND origin_lat BETWEEN ? AND ? AND origin_lng BETWEEN ? AND ?`, box
+  );
+  const [supply] = await getPool().query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS n FROM drivers_online WHERE status = 'AVAILABLE'
+     AND last_active > NOW(3) - INTERVAL ? SECOND
+     AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?`, [freshSeconds, ...box]
+  );
+  // +1 cuenta el pedido que se está cotizando.
+  return { pendingOrders: Number(demand[0]?.n || 0) + 1, availableDrivers: Number(supply[0]?.n || 0) };
+};
 
 /**
- * POST /api/pricing/quote
- * Emite una cotización oficial protegida mediante el motor DPE V2 gobernado por el servidor.
- * La distancia, tarifa base, multiplicador y firma HMAC son calculados exclusivamente en el backend.
+ * POST /api/pricing/quote — precio oficial firmado por el servidor (válido 10 min).
+ * Body: originLat, originLng, destLat, destLng, originAddress, destAddress
  */
-router.post('/quote', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/quote', async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const nums = [b.originLat, b.originLng, b.destLat, b.destLng].map(Number);
+  const [oLat, oLng, dLat, dLng] = nums;
+  if (nums.some((n) => !Number.isFinite(n)) || Math.abs(oLat) > 90 || Math.abs(dLat) > 90 || Math.abs(oLng) > 180 || Math.abs(dLng) > 180) {
+    return res.status(400).json({ success: false, message: 'Ubicaciones inválidas.' });
+  }
+  if (typeof b.originAddress !== 'string' || !b.originAddress.trim() || typeof b.destAddress !== 'string' || !b.destAddress.trim()) {
+    return res.status(400).json({ success: false, message: 'Escribe la dirección de recojo y de entrega.' });
+  }
   try {
-    const {
-      originLat,
-      originLng,
-      destLat,
-      destLng,
-      originAddress,
-      destAddress,
-      durationMin
-    } = req.body;
-
-    // 1. Validación de existencia y tipos de coordenadas
-    if (
-      typeof originLat !== 'number' || isNaN(originLat) ||
-      typeof originLng !== 'number' || isNaN(originLng) ||
-      typeof destLat !== 'number' || isNaN(destLat) ||
-      typeof destLng !== 'number' || isNaN(destLng)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: 'Coordenadas geográficas inválidas o ausentes.'
-      });
-    }
-
-    // 2. Validación de rangos geográficos
-    if (
-      originLat < -90 || originLat > 90 ||
-      destLat < -90 || destLat > 90 ||
-      originLng < -180 || originLng > 180 ||
-      destLng < -180 || destLng > 180
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: 'Coordenadas geográficas fuera del rango terrestre permitido.'
-      });
-    }
-
-    // 3. Validación de direcciones
-    if (!originAddress || typeof originAddress !== 'string' || !destAddress || typeof destAddress !== 'string') {
-      return res.status(400).json({
-        success: false,
-        message: 'Las direcciones de origen y destino son obligatorias.'
-      });
-    }
-
-    // 4. Determinar Demanda y Oferta REALES Y GEOACOTADAS en Firestore
-    let pendingOrders = 1;
-    let availableDrivers = 1;
-
-    if (db) {
-      try {
-        const geoScope = resolveCityFromCoordinates(originLat, originLng, originAddress.trim());
-        const targetCity = geoScope.city;
-
-        // 4.1 Consulta Firestore acotada de Demanda (rides)
-        const demandPlan = buildDemandQueryFilters(originLat, originLng, originAddress.trim());
-        const pendingSnap = await db.collection(demandPlan.collection)
-          .where(demandPlan.scopeFilter.field, demandPlan.scopeFilter.operator, demandPlan.scopeFilter.value)
-          .where(demandPlan.statusFilter.field, demandPlan.statusFilter.operator, demandPlan.statusFilter.value)
-          .get();
-
-        const rawRides: any[] = [];
-        pendingSnap.forEach((docSnap: any) => {
-          rawRides.push({ id: docSnap.id, ...docSnap.data() });
-        });
-
-        // 4.2 Consulta Firestore acotada de Oferta (drivers_online)
-        const supplyPlan = buildSupplyQueryFilters(originLat, originLng, originAddress.trim());
-        const onlineSnap = await db.collection(supplyPlan.collection)
-          .where(supplyPlan.scopeFilter.field, supplyPlan.scopeFilter.operator, supplyPlan.scopeFilter.value)
-          .where(supplyPlan.statusFilter.field, supplyPlan.statusFilter.operator, supplyPlan.statusFilter.value)
-          .get();
-
-        const rawDrivers: any[] = [];
-        onlineSnap.forEach((docSnap: any) => {
-          rawDrivers.push({ id: docSnap.id, ...docSnap.data() });
-        });
-
-        // 4.3 Complemento en users (solo si drivers_online está vacío y para la ciudad objetivo)
-        if (rawDrivers.length === 0 && geoScope.isKnownCity) {
-          const usersSnap = await db.collection('users')
-            .where('driverProfile.availability', '==', true)
-            .where('driverProfile.city', '==', targetCity)
-            .get();
-          usersSnap.forEach((docSnap: any) => {
-            rawDrivers.push({ id: docSnap.id, ...docSnap.data() });
-          });
-        }
-
-        // 4.4 Filtrado geográfico fino por radio metropolitano y validación de frescura telemétrica
-        const localAssessment = filterLocalDemandAndSupply(
-          originLat,
-          originLng,
-          originAddress.trim(),
-          rawRides,
-          rawDrivers
-        );
-
-        pendingOrders = localAssessment.pendingOrders;
-        availableDrivers = localAssessment.availableDrivers;
-
-        console.log(`[PRICING_ROUTES] Ámbito: ${localAssessment.city} (${localAssessment.marketZone.id}) | Demanda Acotada: ${pendingOrders} | Oferta Acotada: ${availableDrivers}`);
-      } catch (dbErr) {
-        console.warn('[PRICING_ROUTES] Fallback de conteo demanda/oferta local:', dbErr);
-        // Fallback seguro: reposo local (1 demanda potencial, 1 oferta base = presión 1.00x)
-        pendingOrders = 1;
-        availableDrivers = 1;
-      }
-    }
-
-    // 5. Generar Cotización Oficial Server-Side DPE V2 mediante Google Routes API
+    const { pendingOrders, availableDrivers } = await localDemandSupply(oLat, oLng);
     const quote = await calculateServerQuote({
-      originLat,
-      originLng,
-      destLat,
-      destLng,
-      originAddress: originAddress.trim(),
-      destAddress: destAddress.trim(),
-      durationMin: typeof durationMin === 'number' ? durationMin : undefined,
-      pendingOrders,
-      availableDrivers
+      originLat: oLat, originLng: oLng, destLat: dLat, destLng: dLng,
+      originAddress: b.originAddress.trim().slice(0, 255),
+      destAddress: b.destAddress.trim().slice(0, 255),
+      pendingOrders, availableDrivers,
     });
-
-    return res.status(200).json({
-      success: true,
-      quote
-    });
-  } catch (error: any) {
-    console.error('[PRICING_ROUTES] Error al calcular cotización:', error);
-    const message = error?.message || 'Error interno del servidor al procesar la cotización.';
-    const statusCode = message.includes('Google Routes') || message.includes('Inconsistencia') ? 502 : 400;
-    return res.status(statusCode).json({
+    return res.json({ success: true, quote });
+  } catch (err) {
+    const msg = (err as Error).message || '';
+    console.error('[PRICING] Error:', msg);
+    const isRoute = /Google|Routes|ruta|Coordenadas/i.test(msg);
+    return res.status(isRoute ? 502 : 500).json({
       success: false,
-      message
+      message: isRoute ? 'No pudimos calcular la ruta. Intenta de nuevo.' : 'Error del servidor. Intenta de nuevo.',
     });
   }
 });
 
-/**
- * POST /api/pricing/verify
- * Verifica la validez y firma de una cotización.
- */
-router.post('/verify', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const { quote } = req.body;
-    if (!quote) {
-      return res.status(400).json({ success: false, message: 'Objeto de cotización requerido.' });
-    }
-
-    const verification = verifyQuoteSignature(quote);
-    if (!verification.valid) {
-      return res.status(400).json({ success: false, reason: verification.reason });
-    }
-
-    return res.status(200).json({ success: true, valid: true });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error?.message || 'Error al verificar cotización.' });
-  }
+/** POST /api/pricing/verify — comprueba que una cotización no fue alterada ni venció. */
+router.post('/verify', (req: Request, res: Response) => {
+  const quote = req.body?.quote as ServerQuoteResult | undefined;
+  if (!quote) return res.status(400).json({ success: false, message: 'Falta la cotización.' });
+  const v = verifyQuoteSignature(quote);
+  return v.valid ? res.json({ success: true, valid: true }) : res.status(400).json({ success: false, valid: false, reason: v.reason });
 });
 
 export default router;

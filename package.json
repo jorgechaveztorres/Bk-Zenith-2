@@ -12,10 +12,7 @@
     "lint": "tsc --noEmit",
     "test:pricing": "tsx scripts/test-pricing-gatekeeper.ts",
     "test:geo": "tsx scripts/test-geo-multicity.ts",
-    "test:e2e": "tsx scripts/test-e2e-idempotency.ts",
-    "test:dispatch": "tsx scripts/test-dispatch-lifecycle.ts",
-    "test:otp": "tsx scripts/test-otp-fsm.ts",
-    "test:all": "npm run test:pricing && npm run test:geo && npm run test:e2e && npm run test:dispatch && npm run test:otp",
+    "test:all": "npm run test:pricing && npm run test:geo",
     "emulators": "firebase emulators:start --project gen-lang-client-0838883154 --only auth,firestore,storage",
     "emulators:export": "firebase emulators:export ./test/emulator-data",
     "test:sandbox": "firebase emulators:exec --project gen-lang-client-0838883154 --only auth,firestore,storage \"npx tsx scripts/virtual-sandbox-runner.ts\"",
@@ -23,7 +20,8 @@
     "test:settlement": "npx firebase-tools@15.32.1 emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx scripts/test-ride-settlement.ts\"",
     "test:financial-reconciliation": "npx firebase-tools@15.32.1 emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx scripts/test-financial-reconciliation.ts\"",
     "test:topup": "npx firebase-tools@15.32.1 emulators:exec --project gen-lang-client-0838883154 --only firestore \"npx tsx test/topup-v1-suite.ts\"",
-    "test:auth": "tsx scripts/test-auth-mysql.ts"
+    "test:auth": "tsx scripts/test-auth-mysql.ts",
+    "test:rides": "tsx scripts/test-rides-mysql.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

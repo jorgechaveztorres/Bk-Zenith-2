@@ -20,7 +20,6 @@ import {
   MockRouteProvider, 
   GoogleRoutesProvider 
 } from '../server/services/routes.service';
-import { RideService } from '../server/services/ride.service';
 import fs from 'fs';
 import path from 'path';
 
@@ -193,60 +192,7 @@ async function runTests() {
   const v17 = verifyQuoteSignature(tamperedDest);
   assert(v17.valid === false, 'Dirección de destino adulterada invalida el sello HMAC');
 
-  console.log('\n--- SECCIÓN 4: GATEKEEPER SERVER-SIDE & PROTECCIÓN ZERO-TRUST ---');
-
-  // 18. quote generado con Google -> puede crear ride
-  let t18Created = false;
-  try {
-    const res = await RideService.requestRide({
-      quote: legitimateQuote,
-      passengerId: 'user_valido_1'
-    }, 'user_valido_1');
-    if (res.id && res.protectedPrice === legitimateQuote.totalFare) {
-      t18Created = true;
-    }
-  } catch (err: any) {
-    if (err.message?.includes('Firestore no disponible') || err.message?.includes('The default Firebase app')) {
-      t18Created = true;
-    }
-  }
-  assert(t18Created, 'Quote oficial generado con Google Routes es aceptado para creación de ride');
-
-  // 19. quote manipulado -> no puede crear ride
-  let t19Rejected = false;
-  try {
-    await RideService.requestRide({
-      quote: { ...legitimateQuote, totalFare: 1.00 },
-      passengerId: 'user_valido_1'
-    }, 'user_valido_1');
-  } catch (err: any) {
-    t19Rejected = true;
-  }
-  assert(t19Rejected, 'Quote con precio adulterado es rechazado por el Gatekeeper en creación');
-
-  // 20. quote expirado -> no puede crear ride
-  let t20Rejected = false;
-  try {
-    await RideService.requestRide({
-      quote: { ...legitimateQuote, expiresAt: new Date(Date.now() - 5000).toISOString() },
-      passengerId: 'user_valido_1'
-    }, 'user_valido_1');
-  } catch (err: any) {
-    t20Rejected = true;
-  }
-  assert(t20Rejected, 'Quote con tiempo expirado es rechazado por el Gatekeeper en creación');
-
-  // 21. Discrepancia de usuario autenticado -> 403
-  let t21Rejected = false;
-  try {
-    await RideService.requestRide({
-      quote: legitimateQuote,
-      passengerId: 'otro_usuario'
-    }, 'usuario_autenticado');
-  } catch (err: any) {
-    t21Rejected = err.statusCode === 403 || err.message.includes('Zero-Trust');
-  }
-  assert(t21Rejected, 'Discrepancia entre auth.uid y passengerId produce rechazo 403');
+  // SECCIÓN 4 (creación de pedidos) se prueba ahora contra MySQL en scripts/test-rides-mysql.ts
 
   console.log('\n--- SECCIÓN 5: VERIFICACIÓN ESTÁTICA Y NO-REGRESIÓN ---');
 
@@ -288,9 +234,9 @@ async function runTests() {
     'firestore.rules prohíbe la creación directa desde cliente (allow create: if false)'
   );
 
-  // 27. Rutas backend usan requireAuth
+  // 27. Rutas de pedidos exigen sesión Zénith (requireSession, login propio MySQL)
   const rideRoutesContent = fs.readFileSync(path.resolve(process.cwd(), 'server/routes/ride.routes.ts'), 'utf-8');
-  assert(rideRoutesContent.includes('router.post(\'/request\', requireAuth,'), 'Ruta /api/rides/request protegida con requireAuth');
+  assert(rideRoutesContent.includes('router.use(requireSession);'), 'Rutas /api/rides/* protegidas con requireSession');
 
   console.log('\n======================================================================');
   console.log(`  RESULTADO: ${passed} PASSED / ${failed} FAILED (TOTAL: ${passed + failed})`);

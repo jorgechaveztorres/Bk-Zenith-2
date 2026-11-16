@@ -1,195 +1,172 @@
 /**
- * ZÉNITH SERVER-SIDE DISPATCH SERVICE
- * 
- * Orquestador oficial y autoritativo de despacho en Backend.
- * Reemplaza de forma permanente la ejecución cliente en navegador.
- * 
- * Responsabilidades:
- * 1. Evalúa solicitudes en búsqueda de conductor (SEARCHING_DRIVER / REQUESTED).
- * 2. Consulta conductores disponibles y frescos en la misma zona geoacotada (city / gridKey).
- * 3. Selecciona el mejor candidato por proximidad vial/geodésica.
- * 4. Genera la asignación temporal (OFFERED) con expiración estricta de 15 segundos.
- * 5. Registra la auditoría en dispatch_logs con autoridad server-side.
+ * ZÉNITH — DESPACHO (MySQL)
+ *
+ * Cómo se reparte un pedido:
+ *  1. El pedido queda en SEARCHING_DRIVER.
+ *  2. Se busca al motorizado DISPONIBLE más cercano al recojo, con GPS reciente,
+ *     dentro de dispatch_max_km, que no haya rechazado/dejado vencer este pedido
+ *     y que no tenga otra oferta abierta.
+ *  3. Se le ofrece por offer_timeout_seconds (15 s).
+ *  4. Si rechaza o se vence, pasa al siguiente. Si nadie acepta en
+ *     search_timeout_seconds, el pedido queda EXPIRED.
+ *
+ * sweep() revisa ofertas vencidas y pedidos sin oferta; lo llama un temporizador
+ * del servidor y también cada consulta del motorizado (por si el proceso estuvo dormido).
  */
-
-import { db } from '../config/firebase';
-import { FieldValue } from 'firebase-admin/firestore';
-import { getGeodesicDistance } from './pricing.service';
-
-export interface DispatchCandidate {
-  driverId: string;
-  driverName?: string;
-  lat: number;
-  lng: number;
-  distanceKm: number;
-  rating?: number;
-}
+import type { PoolConnection, RowDataPacket } from 'mysql2/promise';
+import { getPool, withTransaction } from '../config/mysql';
+import { getNumberSetting } from './settings.service';
 
 export interface DispatchCycleResult {
   dispatched: boolean;
   rideId: string;
-  status: string;
+  status: 'OFFERED' | 'NO_DRIVERS' | 'EXPIRED' | 'NOT_SEARCHING';
   assignedDriverId?: string;
   attemptNumber?: number;
-  reason?: string;
 }
 
+const KM_PER_DEG_LAT = 111.32;
+
+const logDispatch = async (
+  conn: PoolConnection,
+  rideId: string,
+  event: string,
+  details: string,
+  extra: { driverId?: string; assignmentId?: string; attempt?: number; distanceKm?: number } = {}
+) => {
+  await conn.execute(
+    `INSERT INTO dispatch_logs (ride_id, driver_id, assignment_id, event, attempt_number, distance_km, details)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [rideId, extra.driverId ?? null, extra.assignmentId ?? null, event, extra.attempt ?? null, extra.distanceKm ?? null, details.slice(0, 500)]
+  );
+};
+
 export class DispatchService {
-  /**
-   * Ejecuta el ciclo de despacho server-side para una orden específica.
-   */
+  /** Intenta ofrecer el pedido al siguiente motorizado. Seguro de llamar varias veces. */
   static async runDispatchCycle(rideId: string): Promise<DispatchCycleResult> {
-    if (!db) {
-      throw new Error('Servicio de base de datos no disponible.');
-    }
+    const offerSeconds = await getNumberSetting('offer_timeout_seconds', 15);
+    const maxKm = await getNumberSetting('dispatch_max_km', 6);
+    const freshSeconds = await getNumberSetting('driver_fresh_seconds', 120);
 
-    const rideRef = db.collection('rides').doc(rideId);
-    const rideSnap = await rideRef.get();
-
-    if (!rideSnap.exists) {
-      return { dispatched: false, rideId, status: 'NOT_FOUND', reason: 'Viaje no encontrado' };
-    }
-
-    const ride = rideSnap.data()!;
-
-    // Solo despachamos si el viaje está en búsqueda de conductor
-    if (ride.status !== 'SEARCHING_DRIVER' && ride.status !== 'REQUESTED') {
-      return { dispatched: false, rideId, status: ride.status, reason: 'Viaje no está en estado de búsqueda' };
-    }
-
-    // 1. Obtener asignaciones previas para este viaje
-    const assignmentsSnap = await db.collection('assignments')
-      .where('rideId', '==', rideId)
-      .get();
-
-    const existingAssignments: any[] = [];
-    assignmentsSnap.forEach(doc => {
-      existingAssignments.push(doc.data());
-    });
-
-    // Detectar si hay una oferta activa (OFFERED) no expirada
-    const now = Date.now();
-    const activeAssignment = existingAssignments.find(a => a.status === 'OFFERED');
-    if (activeAssignment) {
-      const expiresAt = new Date(activeAssignment.expiresAt).getTime();
-      if (now <= expiresAt) {
-        // Oferta en curso de 15 segundos
-        return {
-          dispatched: true,
-          rideId,
-          status: 'OFFERED',
-          assignedDriverId: activeAssignment.driverId,
-          attemptNumber: activeAssignment.attemptNumber,
-          reason: 'Oferta activa en progreso'
-        };
-      } else {
-        // Expiró: marcarla como EXPIRED
-        const asgDocRef = db.collection('assignments').doc(activeAssignment.assignmentId);
-        await asgDocRef.update({
-          status: 'EXPIRED',
-          expiredAt: FieldValue.serverTimestamp()
-        });
+    return withTransaction(async (conn) => {
+      const [rides] = await conn.query<RowDataPacket[]>(
+        `SELECT id, status, origin_lat, origin_lng, search_expires_at <= NOW(3) AS search_over
+         FROM rides WHERE id = ? FOR UPDATE`,
+        [rideId]
+      );
+      const ride = rides[0];
+      if (!ride || ride.status !== 'SEARCHING_DRIVER') {
+        return { dispatched: false, rideId, status: 'NOT_SEARCHING' };
       }
-    }
 
-    // 2. Extraer conductores excluidos (rechazaron o expiraron este viaje)
-    const excludedDriverIds = existingAssignments
-      .filter(a => a.status === 'REJECTED' || a.status === 'EXPIRED' || a.status === 'CANCELLED')
-      .map(a => a.driverId);
-
-    // 3. Consultar conductores disponibles en la misma ciudad / cuadrícula
-    const city = ride.city || 'Trujillo';
-    let queryRef = db.collection('drivers_online')
-      .where('status', '==', 'AVAILABLE')
-      .where('city', '==', city);
-
-    let onlineSnap = await queryRef.get();
-
-    // Fallback: Si no hay en la ciudad o es zona regional sin ciudad fija, consultar por gridKey
-    if (onlineSnap.empty && ride.gridKey) {
-      onlineSnap = await db.collection('drivers_online')
-        .where('status', '==', 'AVAILABLE')
-        .where('gridKey', '==', ride.gridKey)
-        .get();
-    }
-
-    const availableCandidates: DispatchCandidate[] = [];
-    const originLat = ride.origin?.lat ?? 0;
-    const originLng = ride.origin?.lng ?? 0;
-
-    onlineSnap.forEach(doc => {
-      const d = doc.data();
-      if (!excludedDriverIds.includes(d.driverId)) {
-        const dist = getGeodesicDistance(originLat, originLng, d.lat, d.lng);
-        availableCandidates.push({
-          driverId: d.driverId,
-          driverName: d.driverName,
-          lat: d.lat,
-          lng: d.lng,
-          distanceKm: dist,
-          rating: d.rating || 5.0
-        });
+      // Vencer la oferta abierta si ya pasó su tiempo; si sigue vigente, no hacer nada.
+      const [open] = await conn.query<RowDataPacket[]>(
+        `SELECT id, driver_id, attempt_number, expires_at > NOW(3) AS alive
+         FROM assignments WHERE ride_id = ? AND status = 'OFFERED' FOR UPDATE`,
+        [rideId]
+      );
+      for (const a of open) {
+        if (Number(a.alive)) {
+          return { dispatched: true, rideId, status: 'OFFERED', assignedDriverId: String(a.driver_id), attemptNumber: Number(a.attempt_number) };
+        }
+        await conn.execute(`UPDATE assignments SET status = 'EXPIRED', responded_at = NOW(3) WHERE id = ?`, [a.id]);
+        await logDispatch(conn, rideId, 'ASSIGNMENT_EXPIRED', 'El motorizado no respondió a tiempo.', { driverId: String(a.driver_id), assignmentId: String(a.id) });
       }
-    });
 
-    if (availableCandidates.length === 0) {
-      // Registrar evento de auditoría
-      await db.collection('dispatch_logs').add({
-        rideId,
-        event: 'NO_DRIVERS_AVAILABLE',
-        attemptNumber: existingAssignments.length + 1,
-        details: 'No se encontraron conductores AVAILABLE aptos en la zona.',
-        createdAt: FieldValue.serverTimestamp()
+      if (Number(ride.search_over)) {
+        await conn.execute(`UPDATE rides SET status = 'EXPIRED', solicitude_status = 'CLOSED' WHERE id = ?`, [rideId]);
+        await logDispatch(conn, rideId, 'SEARCH_EXPIRED', 'Nadie aceptó el pedido dentro del tiempo de búsqueda.');
+        return { dispatched: false, rideId, status: 'EXPIRED' };
+      }
+
+      const [cnt] = await conn.query<RowDataPacket[]>('SELECT COUNT(*) AS n FROM assignments WHERE ride_id = ?', [rideId]);
+      const attempt = Number(cnt[0]?.n || 0) + 1;
+
+      // Candidatos: caja geográfica para usar índice + distancia real (Haversine) en SQL.
+      const lat = Number(ride.origin_lat);
+      const lng = Number(ride.origin_lng);
+      const dLat = maxKm / KM_PER_DEG_LAT;
+      const dLng = maxKm / (KM_PER_DEG_LAT * Math.max(0.1, Math.cos((lat * Math.PI) / 180)));
+      const [cands] = await conn.query<RowDataPacket[]>(
+        `SELECT d.driver_id, u.full_name,
+                6371 * 2 * ASIN(SQRT(POW(SIN(RADIANS(d.lat - ?) / 2), 2) +
+                  COS(RADIANS(?)) * COS(RADIANS(d.lat)) * POW(SIN(RADIANS(d.lng - ?) / 2), 2))) AS km
+         FROM drivers_online d
+         JOIN users u ON u.id = d.driver_id AND u.is_blocked = 0
+         JOIN driver_profiles p ON p.user_id = d.driver_id AND p.status = 'APPROVED'
+              AND (p.suspended_until IS NULL OR p.suspended_until < NOW(3))
+         WHERE d.status = 'AVAILABLE'
+           AND d.last_active > NOW(3) - INTERVAL ? SECOND
+           AND d.lat BETWEEN ? AND ? AND d.lng BETWEEN ? AND ?
+           AND d.driver_id NOT IN (SELECT a.driver_id FROM assignments a WHERE a.ride_id = ?)
+           AND NOT EXISTS (SELECT 1 FROM assignments o WHERE o.driver_id = d.driver_id
+                           AND o.status = 'OFFERED' AND o.expires_at > NOW(3))
+         HAVING km <= ?
+         ORDER BY km ASC
+         LIMIT 1`,
+        [lat, lat, lng, freshSeconds, lat - dLat, lat + dLat, lng - dLng, lng + dLng, rideId, maxKm]
+      );
+      const best = cands[0];
+      if (!best) {
+        await logDispatch(conn, rideId, 'NO_DRIVERS_AVAILABLE', 'No hay motorizados disponibles cerca.', { attempt });
+        return { dispatched: false, rideId, status: 'NO_DRIVERS', attemptNumber: attempt };
+      }
+
+      const assignmentId = `ASG_${rideId}_${attempt}`;
+      const km = Number(Number(best.km).toFixed(3));
+      await conn.execute(
+        `INSERT INTO assignments (id, ride_id, driver_id, driver_name, distance_km, attempt_number, status, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'OFFERED', NOW(3) + INTERVAL ? SECOND)`,
+        [assignmentId, rideId, best.driver_id, best.full_name, km, attempt, offerSeconds]
+      );
+      await logDispatch(conn, rideId, 'ASSIGNMENT_OFFERED', `Ofrecido a motorizado a ${km.toFixed(2)} km`, {
+        driverId: String(best.driver_id), assignmentId, attempt, distanceKm: km,
       });
-      return {
-        dispatched: false,
-        rideId,
-        status: 'NO_DRIVERS',
-        attemptNumber: existingAssignments.length + 1,
-        reason: 'Sin conductores disponibles'
-      };
-    }
-
-    // 4. Seleccionar el mejor candidato (menor distancia a origen)
-    availableCandidates.sort((a, b) => a.distanceKm - b.distanceKm);
-    const bestCandidate = availableCandidates[0];
-
-    // 5. Crear la asignación oficial OFFERED (15 segundos)
-    const assignmentId = `ASG_${rideId}_${Date.now()}`;
-    const expiresAtDate = new Date(now + 15 * 1000).toISOString();
-
-    const assignmentData = {
-      assignmentId,
-      rideId,
-      driverId: bestCandidate.driverId,
-      driverName: bestCandidate.driverName || 'Conductor Zénith',
-      distanceKm: bestCandidate.distanceKm,
-      attemptNumber: existingAssignments.length + 1,
-      status: 'OFFERED',
-      assignedAt: FieldValue.serverTimestamp(),
-      expiresAt: expiresAtDate
-    };
-
-    await db.collection('assignments').doc(assignmentId).set(assignmentData);
-
-    // 6. Auditoría inmutable de despacho
-    await db.collection('dispatch_logs').add({
-      rideId,
-      driverId: bestCandidate.driverId,
-      assignmentId,
-      event: 'ASSIGNMENT_OFFERED',
-      attemptNumber: assignmentData.attemptNumber,
-      distanceKm: bestCandidate.distanceKm,
-      details: `Viaje ofrecido server-side a conductor a ${bestCandidate.distanceKm.toFixed(2)} km`,
-      createdAt: FieldValue.serverTimestamp()
+      return { dispatched: true, rideId, status: 'OFFERED', assignedDriverId: String(best.driver_id), attemptNumber: attempt };
     });
+  }
 
-    return {
-      dispatched: true,
-      rideId,
-      status: 'OFFERED',
-      assignedDriverId: bestCandidate.driverId,
-      attemptNumber: assignmentData.attemptNumber
-    };
+  /** Revisa todos los pedidos que buscan motorizado y sin oferta vigente. */
+  static async sweep(): Promise<number> {
+    const [rows] = await getPool().query<RowDataPacket[]>(
+      `SELECT r.id FROM rides r
+       WHERE r.status = 'SEARCHING_DRIVER'
+         AND NOT EXISTS (SELECT 1 FROM assignments a WHERE a.ride_id = r.id
+                         AND a.status = 'OFFERED' AND a.expires_at > NOW(3))
+       ORDER BY r.created_at ASC LIMIT 50`
+    );
+    for (const r of rows) {
+      try {
+        await DispatchService.runDispatchCycle(String(r.id));
+      } catch (err) {
+        console.error('[DISPATCH] Error en barrido:', (err as Error).message);
+      }
+    }
+    return rows.length;
+  }
+
+  private static timer: NodeJS.Timeout | null = null;
+
+  /** Barrido automático cada pocos segundos (se activa al arrancar el servidor). */
+  static startSweeper(intervalMs = 4000) {
+    if (DispatchService.timer) return;
+    let running = false;
+    DispatchService.timer = setInterval(async () => {
+      if (running) return;
+      running = true;
+      try {
+        await DispatchService.sweep();
+      } catch (err) {
+        console.error('[DISPATCH] Barrido falló:', (err as Error).message);
+      } finally {
+        running = false;
+      }
+    }, intervalMs);
+    DispatchService.timer.unref();
+  }
+
+  static stopSweeper() {
+    if (DispatchService.timer) clearInterval(DispatchService.timer);
+    DispatchService.timer = null;
   }
 }
