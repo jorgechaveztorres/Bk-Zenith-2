@@ -23,7 +23,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 
 // server.ts
 var import_express13 = __toESM(require("express"), 1);
-var import_path = __toESM(require("path"), 1);
+var import_path2 = __toESM(require("path"), 1);
 
 // server/app.ts
 var import_express12 = __toESM(require("express"), 1);
@@ -2940,6 +2940,8 @@ var import_express_rate_limit4 = __toESM(require("express-rate-limit"), 1);
 
 // server/services/auth.service.ts
 var import_crypto3 = __toESM(require("crypto"), 1);
+var import_fs = __toESM(require("fs"), 1);
+var import_path = __toESM(require("path"), 1);
 var import_bcryptjs = __toESM(require("bcryptjs"), 1);
 var import_jsonwebtoken = __toESM(require("jsonwebtoken"), 1);
 
@@ -3015,9 +3017,20 @@ var OTP_MAX_PER_DAY = 6;
 var ACCESS_TTL = "1h";
 var REFRESH_TTL_DAYS = 30;
 var MIN_PASSWORD = 6;
+var cachedSecret = null;
 var jwtSecret = () => {
-  const s = process.env.JWT_SECRET;
-  if (!s || s.length < 32) throw new Error("JWT_SECRET debe existir y tener al menos 32 caracteres.");
+  if (cachedSecret) return cachedSecret;
+  let s = process.env.JWT_SECRET;
+  const file = process.env.JWT_SECRET_FILE;
+  if (!s && file) {
+    if (!import_fs.default.existsSync(file)) {
+      import_fs.default.mkdirSync(import_path.default.dirname(file), { recursive: true, mode: 448 });
+      import_fs.default.writeFileSync(file, import_crypto3.default.randomBytes(64).toString("base64url"), { mode: 384, flag: "wx" });
+    }
+    s = import_fs.default.readFileSync(file, "utf8").trim();
+  }
+  if (!s || s.length < 32) throw new Error("Falta JWT_SECRET (o JWT_SECRET_FILE) de al menos 32 caracteres.");
+  cachedSecret = s;
   return s;
 };
 var sha256 = (v) => import_crypto3.default.createHash("sha256").update(v).digest("hex");
@@ -3359,13 +3372,13 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = import_path.default.join(process.cwd(), "dist");
+    const distPath = import_path2.default.join(process.cwd(), "dist");
     app.use(import_express13.default.static(distPath));
     app.get("*", (req, res) => {
       if (req.path.includes("/api/")) {
         return res.status(404).json({ success: false, message: "Ruta no encontrada." });
       }
-      res.sendFile(import_path.default.join(distPath, "index.html"));
+      res.sendFile(import_path2.default.join(distPath, "index.html"));
     });
   }
   app.listen(PORT, "0.0.0.0", () => {
