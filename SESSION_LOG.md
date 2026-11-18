@@ -1,5 +1,23 @@
 # Registro de Sesión
 
+**Fecha:** 18 de Noviembre de 2026 (parte 4)
+**Agente:** Claude (Sonnet 5)
+**Fase:** MySQL/cPanel — Calificación de viajes
+
+## Objetivo Completado
+- Calificación de viajes (paquete 4 del orden fijado por el usuario): `POST /api/rides/:rideId/rate` en `server/services/ride.service.ts` (`RideService.rateRide`) y `server/routes/ride.routes.ts`. Solo el cliente del pedido puede calificar, solo cuando ya está `COMPLETED`, solo una vez (409 si ya tiene `rating`), de 1 a 5 estrellas con comentario opcional.
+- Al calificar se recalcula `AVG(rides.rating)` de todos los pedidos de ese motorizado dentro de la misma transacción y se actualiza `driver_profiles.rating` y `users.rating` — ambas columnas ya existían desde el esquema original pero nadie las usaba todavía.
+- `admin.service.ts` agrega `p.rating` al `SELECT` y a `DriverApplicationView`; `src/api/types.ts` lo refleja en `ApiDriverApplication`.
+- App: `OrderHistory.tsx` agrega el componente `RateRide` (estrellas tappables + comentario opcional) dentro de la tarjeta expandida de un pedido `COMPLETED` sin calificar todavía, visible solo para el cliente (no para el motorizado, que no puede autocalificarse). `AdminHome.tsx` muestra el promedio (con ícono de estrella) junto a los datos de un motorizado ya aprobado.
+- Prueba `test:rating` (13 aserciones): pedido inexistente, no calificar antes de `COMPLETED`, rango 1-5 rechaza 0 y 6, califica con 4 estrellas y guarda el comentario, no se puede calificar dos veces, un cliente no puede calificar el pedido de otro, el promedio se recalcula bien con pedidos de dos clientes distintos ((4+2)/2=3.00), el motorizado no puede calificarse a sí mismo, requiere sesión. `npm run lint` y `npm run build` limpios. Suite completa: 185/185 OK (172 anteriores + 13 nuevas).
+- Commit `9ac64f8`, push a `zenith/mysql-login`.
+
+## Pendiente / Siguiente
+- Seguir con el paquete 5 del orden fijado: **push notifications + GPS en segundo plano**. Probablemente Web Push/FCM para las notificaciones y, para el GPS en segundo plano del motorizado en Android, revisar los permisos de ubicación en background que necesitará el APK (paquete 8).
+- No se hizo verificación visual con Playwright de la pantalla nueva (sí 13 pruebas de backend contra la API real).
+
+---
+
 **Fecha:** 18 de Noviembre de 2026 (parte 3)
 **Agente:** Claude (Sonnet 5)
 **Fase:** MySQL/cPanel — Historial de pedidos

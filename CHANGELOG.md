@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.8.0-ride-rating] - 2026-11-18
+### Added
+- Calificación de viajes (completa el ítem 4 de la lista de prioridades): `POST /api/rides/:rideId/rate`, solo el cliente, solo tras `COMPLETED`, solo una vez (1 a 5 estrellas, comentario opcional hasta 500 caracteres).
+- Al calificar, se recalcula al vuelo `AVG(rides.rating)` del motorizado y se actualiza `driver_profiles.rating` y `users.rating` (columnas que ya existían en el esquema desde la migración inicial, pero nunca se usaban).
+- `admin.service.ts` expone `rating` en `DriverApplicationView`/`ApiDriverApplication`.
+- App: `OrderHistory.tsx` agrega un selector de estrellas tappable en pedidos entregados sin calificar (solo para el cliente); `AdminHome.tsx` muestra el promedio del motorizado aprobado.
+- Prueba `test:rating` (13 casos): rango 1-5, una sola vez, no antes de `COMPLETED`, no calificar pedido ajeno, el motorizado no puede autocalificarse, recálculo correcto del promedio con pedidos de distintos clientes, requiere sesión. Suite completa 185/185 en verde.
+
+---
+
 ## [2.7.0-order-history] - 2026-11-18
 ### Added
 - Historial de pedidos (completa el ítem 3 de la lista de prioridades): `GET /api/rides/history`, paginado y del más reciente al más antiguo, con los pedidos ya terminados (`COMPLETED`/`CANCELLED`/`EXPIRED`) del cliente o del motorizado — reutiliza la tabla `rides` existente, sin migración nueva.

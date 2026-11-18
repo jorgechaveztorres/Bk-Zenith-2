@@ -97,12 +97,13 @@ Fase 6: Despliegue y Prod              ░░░░░░░░░░░░░�
 - [x] Documentos del motorizado: datos de vehículo/licencia + fotos de licencia y vehículo, con revisión del admin antes de aprobar.
 - [x] SMS real con Twilio: `SMS_PROVIDER=twilio` envía el código por SMS real (credenciales solo por variable de entorno); `console` sigue de modo prueba y es lo que usa toda la suite de tests.
 - [x] Historial de pedidos: `GET /api/rides/history` paginado (delivery y comida, cliente y motorizado), reutilizando la tabla `rides` existente.
+- [x] Calificación de viajes: `POST /api/rides/:rideId/rate` (1 a 5 estrellas, el cliente al motorizado, una sola vez); promedio visible en el panel admin.
 
 ### Orden de prioridades fijado por el usuario (17-nov-2026, Google Routes al final)
 1. [x] Documentos del motorizado.
 2. [x] SMS real (Twilio integrado; `SMS_PROVIDER=console` sigue siendo el modo de prueba).
 3. [x] Historial de pedidos.
-4. [ ] Calificación de viajes.
+4. [x] Calificación de viajes.
 5. [ ] Push notifications + GPS en segundo plano.
 6. [ ] Recarga Yape con OCR/IA del comprobante (hoy es 100% manual: el motorizado escribe el número de operación).
 7. [ ] Limpieza técnica: pantallas/servicios Firebase muertos, ramas sin fusionar, borrar `zenith-wstest` en cPanel.

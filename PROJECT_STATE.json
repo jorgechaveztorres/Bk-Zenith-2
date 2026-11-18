@@ -3,16 +3,16 @@
   "repository_version": "2.1.0-app-mysql",
   "architecture_version": "3.0.0-mysql-cpanel-sin-firebase",
   "current_phase": "Migración a MySQL en cPanel (sin Firebase): servidor listo y app núcleo (login, cliente, motorizado) ya sobre la API",
-  "current_sprint": "Historial de pedidos completado. El usuario fijó el orden del resto: calificación, push+GPS en segundo plano, recarga con OCR, limpieza técnica, APK firmado, backups/secretos, y Google Routes al final.",
+  "current_sprint": "Calificación de viajes completada. El usuario fijó el orden del resto: push+GPS en segundo plano, recarga con OCR, limpieza técnica, APK firmado, backups/secretos, y Google Routes al final.",
   "current_agent": "CLAUDE_OPUS_5_5",
   "active_branch": "zenith/mysql-login (deploy: rama deploy-cpanel)",
-  "last_commit": "feat(rides): historial de pedidos (delivery y comida)",
-  "repository_status": "Build Green — tsc 0 errores, build OK; pruebas auth 23, rides 38, realtime 13, app 27, food 15, admin 11, wallet 20, driver-documents 12, order-history 13 (172 en total) contra MariaDB local",
-  "next_work_package": "Historial de pedidos completado (paquete 3): GET /api/rides/history (server/services/ride.service.ts → RideService.getHistory, server/routes/ride.routes.ts) devuelve, paginado y del más reciente al más antiguo, los pedidos del usuario (cliente o motorizado, por passenger_id O driver_id) ya terminados (COMPLETED/CANCELLED/EXPIRED) — reutiliza la tabla rides existente, sin migración nueva, ya que order_type ya distinguía delivery de comida y rating/feedback/cancelled_by/cancel_reason ya existían en el esquema. pageSize tiene tope de 50. RideView ahora expone rating/feedback/cancelledBy/cancelReason (útiles para el siguiente paquete, calificación). App: src/components/app/OrderHistory.tsx (ícono 'History' propio en el header, visible para cliente y motorizado, sin restricción de rol) con tarjetas expandibles por pedido (ítems de comida o direcciones de delivery, pago, contraparte, motivo de cancelación, calificación si existe) y botón 'Ver más' para paginar. Prueba test:order-history (13 casos: historial vacío, un pedido activo no sale hasta terminar, ambos lados lo ven, no ve pedidos ajenos, orden descendente, paginación con hasMore, tope de pageSize, requiere sesión). ORDEN DE PRIORIDADES decidido por el usuario (2026-11-17, Google Routes al final): 1) documentos del motorizado [HECHO], 2) SMS real [HECHO], 3) historial de pedidos [HECHO], 4) calificación de viajes, 5) push notifications + GPS en segundo plano, 6) recarga Yape con OCR/IA del comprobante (hoy 100% manual), 7) limpieza técnica (pantallas/servicios Firebase muertos, ramas sin fusionar, borrar zenith-wstest en cPanel), 8) APK firmado para Play Store, 9) backups de BD + revisar secretos de producción en cPanel, 10) Google Routes (al final). Siguiente paso: empezar el ítem 4, calificación de viajes (las columnas rides.rating/rides.feedback ya existen en el esquema, solo falta el endpoint para que el cliente califique tras COMPLETED y mostrarlo en el perfil/historial del motorizado).",
+  "last_commit": "feat(rides): calificación de viajes (1 a 5 estrellas)",
+  "repository_status": "Build Green — tsc 0 errores, build OK; pruebas auth 23, rides 38, realtime 13, app 27, food 15, admin 11, wallet 20, driver-documents 12, order-history 13, rating 13 (185 en total) contra MariaDB local",
+  "next_work_package": "Calificación de viajes completada (paquete 4): POST /api/rides/:rideId/rate (server/services/ride.service.ts → RideService.rateRide, server/routes/ride.routes.ts). Solo el cliente (passenger_id del pedido) puede calificar, solo cuando el pedido está COMPLETED, solo una vez (rechaza con 409 si rides.rating ya no es null), rating entero 1-5, feedback opcional (máx. 500 caracteres). Al calificar, recalcula AVG(rides.rating) de todos los pedidos de ese motorizado y actualiza driver_profiles.rating y users.rating (ambas columnas ya existían en el esquema, antes sin usar). admin.service.ts ahora expone rating en DriverApplicationView/ApiDriverApplication. App: OrderHistory.tsx muestra un selector de estrellas tappable (componente RateRide) en pedidos COMPLETED sin calificar, solo para el cliente (no para el motorizado); AdminHome.tsx muestra el promedio junto a los datos del motorizado aprobado. Prueba test:rating (13 casos: no calificar antes de COMPLETED, rango 1-5, una sola vez, no calificar pedido ajeno, el motorizado no puede autocalificarse, recálculo correcto del promedio con 2 pedidos de distintos clientes, requiere sesión). ORDEN DE PRIORIDADES decidido por el usuario (2026-11-17, Google Routes al final): 1) documentos del motorizado [HECHO], 2) SMS real [HECHO], 3) historial de pedidos [HECHO], 4) calificación de viajes [HECHO], 5) push notifications + GPS en segundo plano, 6) recarga Yape con OCR/IA del comprobante (hoy 100% manual), 7) limpieza técnica (pantallas/servicios Firebase muertos, ramas sin fusionar, borrar zenith-wstest en cPanel), 8) APK firmado para Play Store, 9) backups de BD + revisar secretos de producción en cPanel, 10) Google Routes (al final). Siguiente paso: empezar el ítem 5, push notifications + GPS en segundo plano (probablemente Firebase Cloud Messaging o Web Push + un service worker, y para GPS en segundo plano en Android revisar permisos de ubicación en background del APK).",
   "next_agent": "Claude",
   "blocked": false,
   "blockers": [],
-  "updated_at": "2026-11-18T00:55:00-05:00",
+  "updated_at": "2026-11-18T01:15:00-05:00",
   "server": {
     "url": "https://shocos.nom.pe/zenith-api",
     "db": "MariaDB shocos_zenith",
@@ -46,12 +46,12 @@
       "panel admin: aprobar/rechazar motorizados (AdminHome.tsx)",
       "billetera: deuda de comisión + recarga Yape manual (WalletHome.tsx, AdminTopups.tsx)",
       "documentos del motorizado: vehículo/licencia + fotos (MyDocuments.tsx), con miniaturas en el panel admin",
-      "historial de pedidos: delivery y comida, cliente y motorizado, paginado (OrderHistory.tsx)"
+      "historial de pedidos: delivery y comida, cliente y motorizado, paginado (OrderHistory.tsx)",
+      "calificación de viajes: el cliente califica 1-5 al motorizado tras entregar, promedio visible en el panel admin"
     ],
     "mapa": "OpenStreetMap + Leaflet (gratis); antes del lanzamiento con mucho tráfico cambiar tiles/buscador a proveedor pagado o propio",
     "firebase_en_bundle": false,
     "pendiente": [
-      "calificación",
       "push notifications + GPS en segundo plano",
       "pantallas viejas sin usar (PassengerFlow, DriverFlow, admin, LSO, heart test) — borrar o migrar"
     ]
