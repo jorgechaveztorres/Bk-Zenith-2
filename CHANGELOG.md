@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.0-sms-twilio] - 2026-11-18
+### Added
+- SMS real con Twilio (completa el ítem 2 de la lista de prioridades): `server/services/sms.service.ts` agrega una clase `TwilioSms` que implementa `SmsSender`, usando el paquete `twilio` (`^6.3.0`).
+- `SMS_PROVIDER=twilio` activa el envío real; lee `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, y `TWILIO_FROM_NUMBER` (o `TWILIO_MESSAGING_SERVICE_SID` si se usa un Messaging Service) solo de variables de entorno — nunca se pidieron ni se escribieron credenciales reales en el chat.
+- `SMS_PROVIDER=console` sigue siendo el modo de prueba por defecto (el código solo sale en el log), y es el que usa toda la suite de tests vía `setSmsSender()`.
+- `.env.example` documenta las 4 variables nuevas de Twilio, vacías, con nota de que las credenciales reales van solo en el `.env`/entorno de cada despliegue.
+### Decided
+- Se evaluó un proveedor llamado "Gamanet" a pedido del usuario; no se encontró documentación pública de ningún proveedor de SMS con ese nombre. El usuario confirmó que no tiene cuenta ni documentación aún, y eligió integrar Twilio ahora (ya tiene cuenta y credenciales). Si Gamanet aparece más adelante, basta agregar otra clase que implemente `SmsSender` y un nuevo `case` en el switch de `getSmsSender()`.
+
+---
+
 ## [2.5.0-driver-documents] - 2026-11-18
 ### Added
 - Documentos del motorizado (completa APP-002): datos de vehículo/licencia y fotos de la licencia/brevete y del vehículo (placa visible), en vez de aprobar solo con el texto de la solicitud.

@@ -95,10 +95,11 @@ Fase 6: Despliegue y Prod              ░░░░░░░░░░░░░�
 - [x] Panel de aprobación del admin (parte de APP-002): aprobar/rechazar motorizados desde la app, ya no por phpMyAdmin.
 - [x] Billetera/Yape: deuda de comisión 10 % (mín. S/ 0.50, 14 días gratis para motorizados nuevos), recarga Yape manual revisada por el admin, bloqueo casi al llegar a S/ 0 (modelo InDrive: nunca acumula deuda).
 - [x] Documentos del motorizado: datos de vehículo/licencia + fotos de licencia y vehículo, con revisión del admin antes de aprobar.
+- [x] SMS real con Twilio: `SMS_PROVIDER=twilio` envía el código por SMS real (credenciales solo por variable de entorno); `console` sigue de modo prueba y es lo que usa toda la suite de tests.
 
 ### Orden de prioridades fijado por el usuario (17-nov-2026, Google Routes al final)
 1. [x] Documentos del motorizado.
-2. [ ] SMS real (hoy `SMS_PROVIDER=console`, el código solo sale en el log del servidor).
+2. [x] SMS real (Twilio integrado; `SMS_PROVIDER=console` sigue siendo el modo de prueba).
 3. [ ] Historial de pedidos.
 4. [ ] Calificación de viajes.
 5. [ ] Push notifications + GPS en segundo plano.

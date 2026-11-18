@@ -1,5 +1,23 @@
 # Registro de Sesión
 
+**Fecha:** 18 de Noviembre de 2026 (parte 2)
+**Agente:** Claude (Sonnet 5)
+**Fase:** MySQL/cPanel — SMS real con Twilio
+
+## Objetivo Completado
+- SMS real (paquete 2 del orden fijado por el usuario): `server/services/sms.service.ts` ahora tiene una clase `TwilioSms` (implementa `SmsSender`) junto a la ya existente `ConsoleSms`. `SMS_PROVIDER=twilio` envía por Twilio de verdad; `SMS_PROVIDER=console` sigue siendo el default y lo que usan todos los tests.
+- Credenciales: el usuario confirmó que ya tiene cuenta y credenciales de Twilio, pero decidí no pedírselas ni aceptarlas por el chat (son sensibles). El código las lee solo de variables de entorno (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` o `TWILIO_MESSAGING_SERVICE_SID`); el usuario las pondrá él mismo en su `.env`/entorno de cPanel al desplegar.
+- Antes de decidir Twilio: el usuario pidió evaluar un proveedor llamado "Gamanet"; busqué documentación pública (3 búsquedas distintas) y no encontré ningún rastro de un proveedor de SMS con ese nombre. El usuario confirmó que no tiene cuenta ni documentación de Gamanet aún, y eligió integrar Twilio ahora mismo en vez de esperar.
+- `.env.example` documenta las 4 variables nuevas de Twilio (vacías, sin valores reales).
+- `npm install twilio` (`^6.3.0`). `npm run lint` y `npm run build` limpios. Reinicié MariaDB (el entorno se reseteó) y corrí la suite completa: 159/159 OK (auth 23, rides 38, realtime 13, app 27, food 15, admin 11, wallet 20, driver-documents 12) — sin cambios porque los tests usan `setSmsSender()` para inyectar un sender simulado.
+- Commit `b36257b` y push a `zenith/mysql-login`.
+
+## Pendiente / Siguiente
+- Seguir con el paquete 3 del orden fijado: **historial de pedidos**.
+- Si en el futuro aparece documentación de "Gamanet", basta agregar una clase más que implemente `SmsSender` y un nuevo `case` en `getSmsSender()`, sin tocar el resto del login.
+
+---
+
 **Fecha:** 18 de Noviembre de 2026
 **Agente:** Claude (Sonnet 5)
 **Fase:** MySQL/cPanel — Documentos del motorizado (APP-002 completo)
