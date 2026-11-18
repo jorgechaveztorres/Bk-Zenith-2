@@ -66,7 +66,7 @@ export class WalletService {
     );
     const w = rows[0];
     if (!w) throw new HttpError(404, 'No se encontró la billetera.');
-    const debtLimit = await getNumberSetting('wallet_debt_limit', 50);
+    const debtLimit = await getNumberSetting('wallet_debt_limit', 2);
     const freeUntil = await WalletService.freePeriodEnd(null, driverId);
     return {
       driverId,
@@ -101,7 +101,7 @@ export class WalletService {
   static async isBlockedByDebt(conn: PoolConnection, driverId: string): Promise<boolean> {
     const [rows] = await conn.query<RowDataPacket[]>('SELECT cash_debt FROM wallets WHERE driver_id = ?', [driverId]);
     const debt = rows[0] ? Number(rows[0].cash_debt) : 0;
-    const limit = await getNumberSetting('wallet_debt_limit', 50);
+    const limit = await getNumberSetting('wallet_debt_limit', 2);
     return debt > limit;
   }
 
