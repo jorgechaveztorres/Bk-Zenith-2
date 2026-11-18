@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import { createApp } from "./server/app";
 import { DispatchService } from "./server/services/dispatch.service";
+import { RealtimeHub, realtimePaths } from "./server/realtime/hub";
 
 async function startServer() {
   const app = createApp();
@@ -32,9 +33,12 @@ async function startServer() {
   // Barrido de despacho (ofertas vencidas -> siguiente motorizado). Solo si hay MySQL configurado.
   if (process.env.DB_NAME) DispatchService.startSweeper();
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Zénith Backend Server running on http://localhost:${PORT}`);
   });
+
+  // Tiempo real: avisos al instante por WebSocket (la app sigue funcionando sin él).
+  new RealtimeHub(realtimePaths()).attach(server);
 }
 
 startServer();

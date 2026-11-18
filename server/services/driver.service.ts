@@ -6,6 +6,7 @@ import type { RowDataPacket } from 'mysql2/promise';
 import { getPool, withTransaction } from '../config/mysql';
 import { DispatchService } from './dispatch.service';
 import { HttpError } from './http-error';
+import { notify, PendingNotice } from '../realtime/bus';
 
 export interface OfferView {
   assignmentId: string;
@@ -39,7 +40,9 @@ export class DriverService {
     const heading = Number.isFinite(Number(input.heading)) ? Math.round(Number(input.heading)) : null;
     const speed = Number.isFinite(Number(input.speedKmh)) ? Number(Number(input.speedKmh).toFixed(1)) : null;
 
-    return withTransaction(async (conn) => {
+    const notices: PendingNotice[] = [];
+    const out = await withTransaction(async (conn) => {
+      notices.length = 0;
       const [prof] = await conn.query<RowDataPacket[]>(
         `SELECT p.status, p.suspended_until > NOW(3) AS suspended, u.is_blocked
          FROM driver_profiles p JOIN users u ON u.id = p.user_id WHERE p.user_id = ?`, [driverId]
@@ -67,10 +70,15 @@ export class DriverService {
       await conn.execute('UPDATE driver_profiles SET availability = ?, last_connection = NOW(3) WHERE user_id = ?', [status === 'OFFLINE' ? 0 : 1, driverId]);
       // Si lleva un pedido, el cliente ve su ubicación.
       if (busy && cur[0]?.current_ride_id) {
-        await conn.execute('UPDATE rides SET driver_lat = ?, driver_lng = ? WHERE id = ? AND driver_id = ?', [lat, lng, cur[0].current_ride_id, driverId]);
+        const rideId = String(cur[0].current_ride_id);
+        await conn.execute('UPDATE rides SET driver_lat = ?, driver_lng = ? WHERE id = ? AND driver_id = ?', [lat, lng, rideId, driverId]);
+        const [pr] = await conn.query<RowDataPacket[]>('SELECT passenger_id FROM rides WHERE id = ?', [rideId]);
+        if (pr[0]) notices.push({ userId: String(pr[0].passenger_id), event: { type: 'ride.location', rideId, lat, lng, heading } });
       }
       return { status };
     });
+    notify(notices);
+    return out;
   }
 
   /** La oferta vigente para este motorizado (o null). También empuja el despacho por si el temporizador durmió. */

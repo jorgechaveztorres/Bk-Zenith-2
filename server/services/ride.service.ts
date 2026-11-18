@@ -14,6 +14,15 @@ import { resolveCityFromCoordinates } from './geo.service';
 import { DispatchService } from './dispatch.service';
 import { getNumberSetting } from './settings.service';
 import { HttpError } from './http-error';
+import { notify, PendingNotice } from '../realtime/bus';
+
+/** Aviso "el pedido cambió" para el cliente y el motorizado asignado. */
+const rideNotices = (v: RideView): PendingNotice[] => {
+  const ev = { type: 'ride' as const, rideId: v.id, status: v.status };
+  const out: PendingNotice[] = [{ userId: v.passengerId, event: ev }];
+  if (v.driverId) out.push({ userId: v.driverId, event: ev });
+  return out;
+};
 
 export type RideStatus =
   | 'SEARCHING_DRIVER' | 'DRIVER_ASSIGNED' | 'DRIVER_ARRIVING' | 'WAITING_FOR_OTP'
@@ -240,7 +249,7 @@ export class RideService {
 
   /** El motorizado acepta la oferta que se le hizo. */
   static async acceptOffer(assignmentId: string, driverId: string): Promise<RideView> {
-    return withTransaction(async (conn) => {
+    const view = await withTransaction(async (conn) => {
       const [pre] = await conn.query<RowDataPacket[]>('SELECT ride_id, driver_id FROM assignments WHERE id = ?', [assignmentId]);
       if (!pre[0] || pre[0].driver_id !== driverId) throw new HttpError(404, 'Oferta no encontrada.');
 
@@ -278,6 +287,8 @@ export class RideService {
       const [rows] = await conn.query<RowDataPacket[]>('SELECT * FROM rides WHERE id = ?', [ride.id]);
       return toRideView(rows[0]);
     });
+    notify(rideNotices(view));
+    return view;
   }
 
   /** El motorizado rechaza: se ofrece al siguiente al instante. */
@@ -299,7 +310,7 @@ export class RideService {
 
   /** Avance del motorizado: en camino -> llegué (pide código) -> entregado. */
   static async updateStatus(rideId: string, driverId: string, next: string): Promise<RideView> {
-    return withTransaction(async (conn) => {
+    const view = await withTransaction(async (conn) => {
       const ride = await lockRide(conn, rideId);
       if (ride.driver_id !== driverId) throw new HttpError(403, 'Este pedido no es tuyo.');
       const allowed = DRIVER_TRANSITIONS[String(ride.status)] || [];
@@ -321,6 +332,8 @@ export class RideService {
       const [rows] = await conn.query<RowDataPacket[]>('SELECT * FROM rides WHERE id = ?', [rideId]);
       return toRideView(rows[0]);
     });
+    notify(rideNotices(view));
+    return view;
   }
 
   /** El motorizado ingresa el código que le dicta el cliente. 3 intentos. */
@@ -350,12 +363,15 @@ export class RideService {
     });
     // El intento fallido se guarda (fuera del rollback) y luego se informa.
     if (!outcome.ok) throw new HttpError(400, `Código incorrecto. Te quedan ${Math.max(0, outcome.left)} intentos.`);
+    notify(rideNotices(outcome.ride));
     return outcome.ride;
   }
 
   /** Cancelar: el cliente o el motorizado asignado, antes de que termine. */
   static async cancelRide(rideId: string, userId: string, reason?: string): Promise<RideView> {
-    return withTransaction(async (conn) => {
+    const offerClosed: PendingNotice[] = [];
+    const view = await withTransaction(async (conn) => {
+      offerClosed.length = 0;
       const ride = await lockRide(conn, rideId);
       const isPassenger = ride.passenger_id === userId;
       const isDriver = ride.driver_id === userId;
@@ -367,6 +383,10 @@ export class RideService {
         `UPDATE rides SET status = 'CANCELLED', solicitude_status = 'CANCELLED', cancelled_by = ?, cancel_reason = ? WHERE id = ?`,
         [userId, cleanText(reason, 255) ?? null, rideId]
       );
+      const [openOffers] = await conn.query<RowDataPacket[]>(`SELECT id, driver_id FROM assignments WHERE ride_id = ? AND status = 'OFFERED'`, [rideId]);
+      for (const o of openOffers) {
+        offerClosed.push({ userId: String(o.driver_id), event: { type: 'offer.closed', assignmentId: String(o.id), reason: 'CANCELLED' } });
+      }
       await conn.execute(`UPDATE assignments SET status = 'CANCELLED', responded_at = NOW(3) WHERE ride_id = ? AND status = 'OFFERED'`, [rideId]);
       if (ride.driver_id) {
         await conn.execute(`UPDATE drivers_online SET status = 'AVAILABLE', current_ride_id = NULL WHERE driver_id = ?`, [ride.driver_id]);
@@ -375,5 +395,7 @@ export class RideService {
       const [rows] = await conn.query<RowDataPacket[]>('SELECT * FROM rides WHERE id = ?', [rideId]);
       return toRideView(rows[0]);
     });
+    notify([...rideNotices(view), ...offerClosed]);
+    return view;
   }
 }

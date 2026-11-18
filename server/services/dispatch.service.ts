@@ -16,6 +16,7 @@
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { getPool, withTransaction } from '../config/mysql';
 import { getNumberSetting } from './settings.service';
+import { notify, PendingNotice } from '../realtime/bus';
 
 export interface DispatchCycleResult {
   dispatched: boolean;
@@ -48,9 +49,11 @@ export class DispatchService {
     const maxKm = await getNumberSetting('dispatch_max_km', 6);
     const freshSeconds = await getNumberSetting('driver_fresh_seconds', 120);
 
-    return withTransaction(async (conn) => {
+    const notices: PendingNotice[] = [];
+    const result = await withTransaction(async (conn): Promise<DispatchCycleResult> => {
+      notices.length = 0; // si la transacción se reintenta, no duplicar avisos
       const [rides] = await conn.query<RowDataPacket[]>(
-        `SELECT id, status, origin_lat, origin_lng, search_expires_at <= NOW(3) AS search_over
+        `SELECT id, status, passenger_id, origin_lat, origin_lng, search_expires_at <= NOW(3) AS search_over
          FROM rides WHERE id = ? FOR UPDATE`,
         [rideId]
       );
@@ -70,12 +73,14 @@ export class DispatchService {
           return { dispatched: true, rideId, status: 'OFFERED', assignedDriverId: String(a.driver_id), attemptNumber: Number(a.attempt_number) };
         }
         await conn.execute(`UPDATE assignments SET status = 'EXPIRED', responded_at = NOW(3) WHERE id = ?`, [a.id]);
+        notices.push({ userId: String(a.driver_id), event: { type: 'offer.closed', assignmentId: String(a.id), reason: 'EXPIRED' } });
         await logDispatch(conn, rideId, 'ASSIGNMENT_EXPIRED', 'El motorizado no respondió a tiempo.', { driverId: String(a.driver_id), assignmentId: String(a.id) });
       }
 
       if (Number(ride.search_over)) {
         await conn.execute(`UPDATE rides SET status = 'EXPIRED', solicitude_status = 'CLOSED' WHERE id = ?`, [rideId]);
         await logDispatch(conn, rideId, 'SEARCH_EXPIRED', 'Nadie aceptó el pedido dentro del tiempo de búsqueda.');
+        notices.push({ userId: String(ride.passenger_id), event: { type: 'ride', rideId, status: 'EXPIRED' } });
         return { dispatched: false, rideId, status: 'EXPIRED' };
       }
 
@@ -122,8 +127,11 @@ export class DispatchService {
       await logDispatch(conn, rideId, 'ASSIGNMENT_OFFERED', `Ofrecido a motorizado a ${km.toFixed(2)} km`, {
         driverId: String(best.driver_id), assignmentId, attempt, distanceKm: km,
       });
+      notices.push({ userId: String(best.driver_id), event: { type: 'offer', rideId, assignmentId } });
       return { dispatched: true, rideId, status: 'OFFERED', assignedDriverId: String(best.driver_id), attemptNumber: attempt };
     });
+    notify(notices);
+    return result;
   }
 
   /** Revisa todos los pedidos que buscan motorizado y sin oferta vigente. */
