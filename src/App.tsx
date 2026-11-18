@@ -3,7 +3,7 @@
  * Sesión propia (celular + clave) -> pantalla de cliente o de motorizado según el rol.
  */
 import React, { useEffect, useState } from 'react';
-import { LogOut, Car, User as UserIcon, Store } from 'lucide-react';
+import { LogOut, Car, User as UserIcon, Store, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AuthApi } from './api/endpoints';
 import { ApiError, getSessionUser, hasSession, onSessionChange } from './api/http';
@@ -13,16 +13,19 @@ import PhoneAuth from './components/auth/PhoneAuth';
 import PassengerHome from './components/app/PassengerHome';
 import DriverHome from './components/app/DriverHome';
 import RestaurantHome from './components/app/RestaurantHome';
+import AdminHome from './components/app/AdminHome';
+
+type View = 'home' | 'restaurant' | 'admin';
 
 export default function App() {
   const [user, setUser] = useState<ApiUser | null>(getSessionUser());
   const [checking, setChecking] = useState(hasSession());
-  const [showRestaurant, setShowRestaurant] = useState(false);
+  const [view, setView] = useState<View>('home');
 
   // Mantener la vista al día con la sesión (login, renovación fallida, logout).
   useEffect(() => onSessionChange((u) => {
     setUser(u);
-    if (!u) setShowRestaurant(false);
+    if (!u) setView('home');
   }), []);
 
   // Al abrir la app con sesión guardada: confirmar con el servidor que sigue vigente.
@@ -84,13 +87,23 @@ export default function App() {
                 <p className="text-sm font-bold truncate max-w-[140px]">{user.fullName}</p>
               </div>
               <button
-                onClick={() => setShowRestaurant((v) => !v)}
-                className={`p-2.5 rounded-xl border ${showRestaurant ? 'bg-[#39FF14]/10 border-[#39FF14] text-[#39FF14]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
+                onClick={() => setView((v) => (v === 'restaurant' ? 'home' : 'restaurant'))}
+                className={`p-2.5 rounded-xl border ${view === 'restaurant' ? 'bg-[#39FF14]/10 border-[#39FF14] text-[#39FF14]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
                 aria-label="Mi restaurante"
                 title="Mi restaurante"
               >
                 <Store size={16} />
               </button>
+              {user.isAdmin && (
+                <button
+                  onClick={() => setView((v) => (v === 'admin' ? 'home' : 'admin'))}
+                  className={`p-2.5 rounded-xl border ${view === 'admin' ? 'bg-[#39FF14]/10 border-[#39FF14] text-[#39FF14]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
+                  aria-label="Panel admin"
+                  title="Panel admin"
+                >
+                  <ShieldCheck size={16} />
+                </button>
+              )}
               <button
                 onClick={() => {
                   if (window.confirm('¿Cerrar sesión?')) void AuthApi.logout();
@@ -108,15 +121,17 @@ export default function App() {
       <main className="max-w-xl mx-auto px-5 pt-24 pb-16">
         <AnimatePresence mode="wait">
           <motion.div
-            key={user ? `${user.id}-${user.role}-${showRestaurant ? 'rest' : 'home'}` : 'auth'}
+            key={user ? `${user.id}-${user.role}-${view}` : 'auth'}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
           >
             {!user ? (
               <PhoneAuth onSignedIn={setUser} />
-            ) : showRestaurant ? (
+            ) : view === 'restaurant' ? (
               <RestaurantHome />
+            ) : view === 'admin' && user.isAdmin ? (
+              <AdminHome />
             ) : isDriver ? (
               <DriverHome user={user} />
             ) : (

@@ -83,6 +83,30 @@ export interface ApiRestaurant {
   createdAt: string;
 }
 
+export type DriverReviewStatus = 'PENDING' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
+
+export interface ApiDriverApplication {
+  userId: string;
+  fullName: string;
+  phone: string | null;
+  status: DriverReviewStatus;
+  isBlocked: boolean;
+  vehicle: {
+    category: string | null;
+    plate: string | null;
+    brand: string | null;
+    model: string | null;
+    year: number | null;
+    color: string | null;
+  };
+  licenseNumber: string | null;
+  licenseExpiry: string | null;
+  rejectionReason: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+}
+
 export interface ApiMenuItem {
   id: string;
   name: string;

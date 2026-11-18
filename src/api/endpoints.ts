@@ -5,7 +5,7 @@
 import { api, saveSession, clearSession, getRefreshToken, updateSessionUser } from './http';
 import type {
   ApiSession, ApiUser, AppRole, ApiRide, ApiQuote, ApiOffer, DeliveryDetails, Place,
-  ApiRestaurant, ApiMenuItem,
+  ApiRestaurant, ApiMenuItem, ApiDriverApplication, DriverReviewStatus,
 } from './types';
 
 export const MIN_PASSWORD = 6;
@@ -135,6 +135,18 @@ export const FoodApi = {
 
   updateMenuItem: async (restaurantId: string, itemId: string, input: Partial<MenuItemInput>) =>
     (await api<{ item: ApiMenuItem }>('PATCH', `/restaurants/${encodeURIComponent(restaurantId)}/menu/${encodeURIComponent(itemId)}`, input)).item,
+};
+
+// ---------------------------------------------------------------- Panel admin (solo users.is_admin)
+export const AdminApi = {
+  drivers: async (status?: DriverReviewStatus) =>
+    (await api<{ drivers: ApiDriverApplication[] }>('GET', `/admin/drivers${status ? `?status=${status}` : ''}`)).drivers,
+
+  approveDriver: async (driverId: string) =>
+    (await api<{ driver: ApiDriverApplication }>('POST', `/admin/drivers/${encodeURIComponent(driverId)}/approve`)).driver,
+
+  rejectDriver: async (driverId: string, reason: string) =>
+    (await api<{ driver: ApiDriverApplication }>('POST', `/admin/drivers/${encodeURIComponent(driverId)}/reject`, { reason })).driver,
 };
 
 // ---------------------------------------------------------------- Motorizado
