@@ -105,7 +105,7 @@ Fase 6: Despliegue y Prod              ░░░░░░░░░░░░░�
 3. [x] Historial de pedidos.
 4. [x] Calificación de viajes.
 5. [x] Push notifications (Web Push/VAPID) — [ ] GPS en segundo plano real (queda para el APK nativo).
-6. [ ] Recarga Yape con OCR/IA del comprobante (hoy es 100% manual: el motorizado escribe el número de operación).
+6. [x] Recarga con menos fricción: Culqi (tarjeta/Yape de un toque, se acredita al instante); la manual sigue de respaldo.
 7. [ ] Limpieza técnica: pantallas/servicios Firebase muertos, ramas sin fusionar, borrar `zenith-wstest` en cPanel.
 8. [ ] APK firmado para Play Store.
 9. [ ] Backups de la base de datos + revisar secretos de producción en cPanel.

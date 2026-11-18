@@ -1,5 +1,20 @@
 # Registro de Sesión
 
+**Fecha:** 18 de Noviembre de 2026 (parte 6)
+**Agente:** Claude (Sonnet 5)
+**Fase:** MySQL/cPanel — Recarga con Culqi
+
+## Objetivo Completado
+- Paquete 6, con cambio de enfoque pedido por el usuario: en vez de OCR/IA sobre el comprobante, se integró **Culqi** (tarjeta/Yape de un toque) para menos fricción. Migración 008, `culqi.service.ts`, `TopupService.chargeWithCulqi` (cobra bruto, acredita neto = bruto − comisión al instante, sin revisión del admin). Comisión configurable en `app_settings`. Rutas `/api/topups/culqi/*`. Frontend: `src/culqi.ts` + botón en `WalletHome.tsx`. La recarga manual sigue de respaldo.
+- Prueba `test:culqi-topup` (15 casos, `fetch` interceptado solo para la URL de Culqi). Suite completa 211/211 OK. Commit `66f08f2`, push a `zenith/mysql-login`.
+- El usuario ya tiene cuenta Culqi con RUC y credenciales propias; decidí (mismo criterio que con Twilio) no pedírselas por chat — las pondrá él en su `.env`/cPanel.
+
+## Pendiente / Siguiente
+- Paquete 7: limpieza técnica (pantallas/servicios Firebase muertos: DriverFlow, ControlCenter, PassengerFlow, OperationalEngine, `src/services/WalletService.ts`, `notification.routes.ts` con Firestore; ramas sin fusionar; borrar `zenith-wstest` en cPanel).
+- El usuario activó "Modo Ahorro de Tokens" (sesión anterior): respuestas cortas, solo el diff, plan antes de código, agrupar preguntas.
+
+---
+
 **Fecha:** 18 de Noviembre de 2026 (parte 5)
 **Agente:** Claude (Sonnet 5)
 **Fase:** MySQL/cPanel — Push notifications (Web Push)

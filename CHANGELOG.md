@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.10.0-culqi-topup] - 2026-11-18
+### Added
+- Recarga de billetera con Culqi (tarjeta/Yape de un toque, completa el ítem 6 en vez del OCR manual): migración 008, `culqi.service.ts`, `TopupService.chargeWithCulqi` (cobra el bruto, acredita de inmediato el neto = bruto − comisión, sin revisión del admin).
+- Comisión configurable en `app_settings` (`culqi_fee_pct`/`culqi_fee_fixed`, default 3.99% + S/0.50).
+- Rutas `POST /api/topups/culqi/charge`, `GET /api/topups/culqi/config`. Frontend: `src/culqi.ts` + botón en `WalletHome.tsx`, visible solo si está configurado; la recarga manual sigue de respaldo.
+- Prueba `test:culqi-topup` (15 casos, sin salir a internet). Suite completa 211/211 en verde.
+
+---
+
 ## [2.9.0-web-push] - 2026-11-18
 ### Added
 - Push notifications con Web Push/VAPID (reemplaza Firebase Cloud Messaging, completa la mitad del ítem 5): migración 007 (`push_subscriptions`), `push.service.ts`, rutas `/api/push/*`, `public/sw.js`, `src/push.ts` (se activa/desactiva solo con el login/logout).
