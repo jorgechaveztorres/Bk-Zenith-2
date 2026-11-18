@@ -13,6 +13,7 @@ import geoRoutes from './geo.routes';
 import restaurantRoutes from './restaurants.routes';
 import adminRoutes from './admin.routes';
 import driverDocumentsRoutes from './driver-documents.routes';
+import pushRoutes from './push.routes';
 
 const router = Router();
 
@@ -30,5 +31,6 @@ router.use('/geo', geoRoutes);
 router.use('/restaurants', restaurantRoutes);
 router.use('/admin', adminRoutes);
 router.use('/driver', driverDocumentsRoutes);
+router.use('/push', pushRoutes);
 
 export default router;

@@ -91,6 +91,12 @@ export const RidesApi = {
     (await api<{ ride: ApiRide }>('POST', `/rides/${encodeURIComponent(rideId)}/rate`, { rating, feedback })).ride,
 };
 
+export const PushApi = {
+  vapidPublicKey: async () => (await api<{ publicKey: string | null }>('GET', '/push/vapid-public-key')).publicKey,
+  subscribe: (subscription: PushSubscriptionJSON) => api('POST', '/push/subscribe', { subscription }),
+  unsubscribe: (endpoint: string) => api('POST', '/push/unsubscribe', { endpoint }),
+};
+
 // ---------------------------------------------------------------- Marketplace de comida
 export interface MenuItemInput {
   name: string;

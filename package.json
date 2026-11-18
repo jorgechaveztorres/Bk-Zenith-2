@@ -28,7 +28,8 @@
     "test:wallet": "tsx scripts/test-wallet-mysql.ts",
     "test:driver-documents": "tsx scripts/test-driver-documents-mysql.ts",
     "test:order-history": "tsx scripts/test-order-history-mysql.ts",
-    "test:rating": "tsx scripts/test-rating-mysql.ts"
+    "test:rating": "tsx scripts/test-rating-mysql.ts",
+    "test:push": "tsx scripts/test-push-mysql.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",
@@ -60,6 +61,7 @@
     "react-leaflet": "^5.0.0",
     "twilio": "^6.3.0",
     "vite": "^6.2.3",
+    "web-push": "^4.0.0",
     "ws": "^8.23.0"
   },
   "devDependencies": {

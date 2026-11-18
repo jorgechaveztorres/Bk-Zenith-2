@@ -17,6 +17,7 @@ import AdminHome from './components/app/AdminHome';
 import WalletHome from './components/app/WalletHome';
 import MyDocuments from './components/app/MyDocuments';
 import OrderHistory from './components/app/OrderHistory';
+import { enablePushNotifications, disablePushNotifications } from './push';
 
 type View = 'home' | 'restaurant' | 'admin' | 'wallet' | 'documents' | 'history';
 
@@ -41,6 +42,12 @@ export default function App() {
       })
       .finally(() => setChecking(false));
   }, []);
+
+  // Avisos push: solo con sesión iniciada; mejor esfuerzo, nunca bloquea la app.
+  useEffect(() => {
+    if (user) void enablePushNotifications();
+    else void disablePushNotifications();
+  }, [user]);
 
   // WebSocket solo con sesión iniciada.
   useEffect(() => {
