@@ -24,6 +24,14 @@ Fase 6: Despliegue y Prod              ░░░░░░░░░░░░░�
 
 ## HITOS Y DESGLOSE DE FASES
 
+### 🟡 Fase 7: Marketplace de Comida (Planificación)
+*Restaurantes publican su menú gratis en Zénith — sin la comisión alta de Rappi/PedidosYa.*
+- [ ] Decidir con el dueño el modelo de cobro a restaurantes (nada, o comisión aparte de la del envío).
+- [ ] Diseñar esquema: restaurantes, menús, pedidos de comida (separado del dominio de encomiendas).
+- [ ] Panel simple para que el restaurante suba/edite su menú.
+- [ ] Flujo de pedido de comida reusando el despacho de motorizados ya existente.
+
+
 ### 🟢 Fase 1: Core Operativo (Completado)
 *Despliegue de la infraestructura básica y el flujo principal de servicio.*
 - [x] Configuración inicial del SDK de Firebase y persistencia en Firestore.
