@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.4.0-wallet] - 2026-11-17
 ### Added
 - Billetera del motorizado con modelo InDrive: el cliente paga en efectivo/Yape directo al motorizado; el motorizado le debe a Zénith la comisión de cada pedido completado.
-- Migración `005_wallet_topup.sql`: columnas `operation_number`, `rejection_reason`, `reviewed_by`, `reviewed_at` en `topup_requests`; setting `wallet_debt_limit` (S/ 50) en `app_settings`.
+- Migración `005_wallet_topup.sql`: columnas `operation_number`, `rejection_reason`, `reviewed_by`, `reviewed_at` en `topup_requests`; setting `wallet_debt_limit` (S/ 2) en `app_settings`.
 - `wallet.service.ts`: cobra la comisión (10%, mínimo S/ 0.50) al completar un pedido, dentro de la misma transacción que `ride.service.ts`; 0% de comisión durante `new_driver_free_days` (14 días) desde la aprobación del motorizado; bloquea su conexión si la deuda supera `wallet_debt_limit`; aplica recargas acreditadas contra la deuda.
 - `topup.service.ts`: flujo manual V1 (sin OCR/IA) — el motorizado pide la recarga con el monto y el número de operación de su Yape; el admin la revisa y la acredita o la rechaza con motivo.
 - Rutas `GET /api/wallet/me`, `GET /api/wallet/movements`, `POST /api/topups`, `GET /api/topups/mine`, y para el admin `GET /api/topups?status=`, `POST /api/topups/:id/credit`, `POST /api/topups/:id/reject`.
