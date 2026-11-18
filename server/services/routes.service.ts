@@ -11,7 +11,7 @@ export interface RouteResult {
   durationSeconds: number;
   durationMinutes: number;
   encodedPolyline?: string;
-  source: 'GOOGLE_ROUTES' | 'MOCK_TEST';
+  source: 'GOOGLE_ROUTES' | 'MOCK_TEST' | 'ESTIMATE';
 }
 
 export interface IRouteProvider {
@@ -212,8 +212,42 @@ export class MockRouteProvider implements IRouteProvider {
   }
 }
 
-// Inyección y Singleton de Proveedor
-let activeRouteProvider: IRouteProvider = new GoogleRoutesProvider();
+/**
+ * Proveedor GRATUITO (sin Google, sin internet): distancia en línea recta multiplicada
+ * por un factor de calles urbanas. Es una aproximación: en Trujillo el recorrido real
+ * suele ser entre 1.2 y 1.5 veces la línea recta. Sirve para desarrollar y probar sin
+ * gastar; antes del lanzamiento se cambia a Google con ROUTE_PROVIDER=google.
+ */
+export class EstimateRouteProvider implements IRouteProvider {
+  constructor(private roadFactor = 1.35, private avgSpeedKmh = 22) {}
+
+  async computeRoute(origin: RouteCoordinates, destination: RouteCoordinates): Promise<RouteResult> {
+    const bad = (c: RouteCoordinates) =>
+      !Number.isFinite(c.lat) || !Number.isFinite(c.lng) || Math.abs(c.lat) > 90 || Math.abs(c.lng) > 180;
+    if (bad(origin) || bad(destination)) throw new Error('Coordenadas de origen o destino fuera de rango.');
+
+    const straightKm = getGeodesicDistance(origin.lat, origin.lng, destination.lat, destination.lng);
+    const distanceKm = Number(Math.max(0.3, straightKm * this.roadFactor).toFixed(3));
+    const durationMinutes = Math.max(2, Math.round((distanceKm / this.avgSpeedKmh) * 60));
+    return {
+      distanceMeters: Math.round(distanceKm * 1000),
+      distanceKm,
+      durationSeconds: durationMinutes * 60,
+      durationMinutes,
+      source: 'ESTIMATE',
+    };
+  }
+}
+
+/**
+ * Proveedor activo según ROUTE_PROVIDER:
+ *  - "google": Google Routes API (cuesta dinero; requiere GOOGLE_MAPS_PLATFORM_KEY con Routes API habilitada).
+ *  - cualquier otro valor o vacío: estimación gratuita. Así nunca se gasta en Google sin decidirlo.
+ */
+const defaultProvider = (): IRouteProvider =>
+  (process.env.ROUTE_PROVIDER || '').toLowerCase() === 'google' ? new GoogleRoutesProvider() : new EstimateRouteProvider();
+
+let activeRouteProvider: IRouteProvider = defaultProvider();
 
 export function setRouteProvider(provider: IRouteProvider) {
   activeRouteProvider = provider;
