@@ -1329,6 +1329,24 @@ var getNumberSetting = async (key, fallback) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+// server/realtime/bus.ts
+var listeners = /* @__PURE__ */ new Set();
+var onRealtime = (fn) => {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+};
+var notify = (notices) => {
+  for (const n of notices) {
+    for (const fn of listeners) {
+      try {
+        fn(n.userId, n.event);
+      } catch (err) {
+        console.error("[REALTIME] Error al avisar:", err.message);
+      }
+    }
+  }
+};
+
 // server/services/dispatch.service.ts
 var KM_PER_DEG_LAT = 111.32;
 var logDispatch = async (conn, rideId, event2, details, extra = {}) => {
@@ -1344,9 +1362,11 @@ var DispatchService = class _DispatchService {
     const offerSeconds = await getNumberSetting("offer_timeout_seconds", 15);
     const maxKm = await getNumberSetting("dispatch_max_km", 6);
     const freshSeconds = await getNumberSetting("driver_fresh_seconds", 120);
-    return withTransaction(async (conn) => {
+    const notices = [];
+    const result = await withTransaction(async (conn) => {
+      notices.length = 0;
       const [rides] = await conn.query(
-        `SELECT id, status, origin_lat, origin_lng, search_expires_at <= NOW(3) AS search_over
+        `SELECT id, status, passenger_id, origin_lat, origin_lng, search_expires_at <= NOW(3) AS search_over
          FROM rides WHERE id = ? FOR UPDATE`,
         [rideId]
       );
@@ -1364,11 +1384,13 @@ var DispatchService = class _DispatchService {
           return { dispatched: true, rideId, status: "OFFERED", assignedDriverId: String(a.driver_id), attemptNumber: Number(a.attempt_number) };
         }
         await conn.execute(`UPDATE assignments SET status = 'EXPIRED', responded_at = NOW(3) WHERE id = ?`, [a.id]);
+        notices.push({ userId: String(a.driver_id), event: { type: "offer.closed", assignmentId: String(a.id), reason: "EXPIRED" } });
         await logDispatch(conn, rideId, "ASSIGNMENT_EXPIRED", "El motorizado no respondi\xF3 a tiempo.", { driverId: String(a.driver_id), assignmentId: String(a.id) });
       }
       if (Number(ride.search_over)) {
         await conn.execute(`UPDATE rides SET status = 'EXPIRED', solicitude_status = 'CLOSED' WHERE id = ?`, [rideId]);
         await logDispatch(conn, rideId, "SEARCH_EXPIRED", "Nadie acept\xF3 el pedido dentro del tiempo de b\xFAsqueda.");
+        notices.push({ userId: String(ride.passenger_id), event: { type: "ride", rideId, status: "EXPIRED" } });
         return { dispatched: false, rideId, status: "EXPIRED" };
       }
       const [cnt] = await conn.query("SELECT COUNT(*) AS n FROM assignments WHERE ride_id = ?", [rideId]);
@@ -1414,8 +1436,11 @@ var DispatchService = class _DispatchService {
         attempt,
         distanceKm: km
       });
+      notices.push({ userId: String(best.driver_id), event: { type: "offer", rideId, assignmentId } });
       return { dispatched: true, rideId, status: "OFFERED", assignedDriverId: String(best.driver_id), attemptNumber: attempt };
     });
+    notify(notices);
+    return result;
   }
   /** Revisa todos los pedidos que buscan motorizado y sin oferta vigente. */
   static async sweep() {
@@ -1470,6 +1495,12 @@ var HttpError = class extends Error {
 };
 
 // server/services/ride.service.ts
+var rideNotices = (v) => {
+  const ev = { type: "ride", rideId: v.id, status: v.status };
+  const out = [{ userId: v.passengerId, event: ev }];
+  if (v.driverId) out.push({ userId: v.driverId, event: ev });
+  return out;
+};
 var DRIVER_TRANSITIONS = {
   DRIVER_ASSIGNED: ["DRIVER_ARRIVING"],
   DRIVER_ARRIVING: ["WAITING_FOR_OTP"],
@@ -1648,7 +1679,7 @@ var RideService = class {
   }
   /** El motorizado acepta la oferta que se le hizo. */
   static async acceptOffer(assignmentId, driverId) {
-    return withTransaction(async (conn) => {
+    const view = await withTransaction(async (conn) => {
       const [pre] = await conn.query("SELECT ride_id, driver_id FROM assignments WHERE id = ?", [assignmentId]);
       if (!pre[0] || pre[0].driver_id !== driverId) throw new HttpError(404, "Oferta no encontrada.");
       const ride = await lockRide(conn, String(pre[0].ride_id));
@@ -1683,6 +1714,8 @@ var RideService = class {
       const [rows] = await conn.query("SELECT * FROM rides WHERE id = ?", [ride.id]);
       return toRideView(rows[0]);
     });
+    notify(rideNotices(view));
+    return view;
   }
   /** El motorizado rechaza: se ofrece al siguiente al instante. */
   static async rejectOffer(assignmentId, driverId) {
@@ -1702,7 +1735,7 @@ var RideService = class {
   }
   /** Avance del motorizado: en camino -> llegué (pide código) -> entregado. */
   static async updateStatus(rideId, driverId, next) {
-    return withTransaction(async (conn) => {
+    const view = await withTransaction(async (conn) => {
       const ride = await lockRide(conn, rideId);
       if (ride.driver_id !== driverId) throw new HttpError(403, "Este pedido no es tuyo.");
       const allowed = DRIVER_TRANSITIONS[String(ride.status)] || [];
@@ -1722,6 +1755,8 @@ var RideService = class {
       const [rows] = await conn.query("SELECT * FROM rides WHERE id = ?", [rideId]);
       return toRideView(rows[0]);
     });
+    notify(rideNotices(view));
+    return view;
   }
   /** El motorizado ingresa el código que le dicta el cliente. 3 intentos. */
   static async verifyOtp(rideId, driverId, code) {
@@ -1748,11 +1783,14 @@ var RideService = class {
       return { ok: true, ride: toRideView(rows[0]) };
     });
     if (!outcome.ok) throw new HttpError(400, `C\xF3digo incorrecto. Te quedan ${Math.max(0, outcome.left)} intentos.`);
+    notify(rideNotices(outcome.ride));
     return outcome.ride;
   }
   /** Cancelar: el cliente o el motorizado asignado, antes de que termine. */
   static async cancelRide(rideId, userId, reason) {
-    return withTransaction(async (conn) => {
+    const offerClosed = [];
+    const view = await withTransaction(async (conn) => {
+      offerClosed.length = 0;
       const ride = await lockRide(conn, rideId);
       const isPassenger = ride.passenger_id === userId;
       const isDriver = ride.driver_id === userId;
@@ -1763,6 +1801,10 @@ var RideService = class {
         `UPDATE rides SET status = 'CANCELLED', solicitude_status = 'CANCELLED', cancelled_by = ?, cancel_reason = ? WHERE id = ?`,
         [userId, cleanText(reason, 255) ?? null, rideId]
       );
+      const [openOffers] = await conn.query(`SELECT id, driver_id FROM assignments WHERE ride_id = ? AND status = 'OFFERED'`, [rideId]);
+      for (const o of openOffers) {
+        offerClosed.push({ userId: String(o.driver_id), event: { type: "offer.closed", assignmentId: String(o.id), reason: "CANCELLED" } });
+      }
       await conn.execute(`UPDATE assignments SET status = 'CANCELLED', responded_at = NOW(3) WHERE ride_id = ? AND status = 'OFFERED'`, [rideId]);
       if (ride.driver_id) {
         await conn.execute(`UPDATE drivers_online SET status = 'AVAILABLE', current_ride_id = NULL WHERE driver_id = ?`, [ride.driver_id]);
@@ -1771,6 +1813,8 @@ var RideService = class {
       const [rows] = await conn.query("SELECT * FROM rides WHERE id = ?", [rideId]);
       return toRideView(rows[0]);
     });
+    notify([...rideNotices(view), ...offerClosed]);
+    return view;
   }
 };
 
@@ -1793,7 +1837,9 @@ var DriverService = class {
     const wantsOnline = input.online !== false;
     const heading = Number.isFinite(Number(input.heading)) ? Math.round(Number(input.heading)) : null;
     const speed = Number.isFinite(Number(input.speedKmh)) ? Number(Number(input.speedKmh).toFixed(1)) : null;
-    return withTransaction(async (conn) => {
+    const notices = [];
+    const out = await withTransaction(async (conn) => {
+      notices.length = 0;
       const [prof] = await conn.query(
         `SELECT p.status, p.suspended_until > NOW(3) AS suspended, u.is_blocked
          FROM driver_profiles p JOIN users u ON u.id = p.user_id WHERE p.user_id = ?`,
@@ -1819,10 +1865,15 @@ var DriverService = class {
       );
       await conn.execute("UPDATE driver_profiles SET availability = ?, last_connection = NOW(3) WHERE user_id = ?", [status === "OFFLINE" ? 0 : 1, driverId]);
       if (busy && cur[0]?.current_ride_id) {
-        await conn.execute("UPDATE rides SET driver_lat = ?, driver_lng = ? WHERE id = ? AND driver_id = ?", [lat, lng, cur[0].current_ride_id, driverId]);
+        const rideId = String(cur[0].current_ride_id);
+        await conn.execute("UPDATE rides SET driver_lat = ?, driver_lng = ? WHERE id = ? AND driver_id = ?", [lat, lng, rideId, driverId]);
+        const [pr] = await conn.query("SELECT passenger_id FROM rides WHERE id = ?", [rideId]);
+        if (pr[0]) notices.push({ userId: String(pr[0].passenger_id), event: { type: "ride.location", rideId, lat, lng, heading } });
       }
       return { status };
     });
+    notify(notices);
+    return out;
   }
   /** La oferta vigente para este motorizado (o null). También empuja el despacho por si el temporizador durmió. */
   static async getCurrentOffer(driverId) {
@@ -3152,6 +3203,101 @@ var createApp = () => {
   return app;
 };
 
+// server/realtime/hub.ts
+var import_ws = require("ws");
+var AUTH_TIMEOUT_MS = 1e4;
+var PING_MS = 25e3;
+var RealtimeHub = class {
+  constructor(paths) {
+    this.paths = paths;
+    this.wss = new import_ws.WebSocketServer({ noServer: true, maxPayload: 16 * 1024 });
+    this.byUser = /* @__PURE__ */ new Map();
+    this.wss.on("connection", (ws) => this.onConnection(ws));
+    this.unsubscribe = onRealtime((userId, event2) => this.send(userId, event2));
+    this.pingTimer = setInterval(() => this.heartbeat(), PING_MS);
+    this.pingTimer.unref();
+  }
+  /** Conecta el hub al servidor HTTP: solo atiende la ruta del WebSocket. */
+  attach(server) {
+    server.on("upgrade", (req, socket, head) => {
+      const url = (req.url || "").split("?")[0].replace(/\/+$/, "");
+      if (!this.paths.includes(url)) {
+        socket.destroy();
+        return;
+      }
+      this.wss.handleUpgrade(req, socket, head, (ws) => this.wss.emit("connection", ws, req));
+    });
+    return this;
+  }
+  /** Cuántas conexiones activas tiene un usuario (para pruebas y diagnóstico). */
+  connectionsOf(userId) {
+    return this.byUser.get(userId)?.size || 0;
+  }
+  close() {
+    clearInterval(this.pingTimer);
+    this.unsubscribe();
+    for (const set of this.byUser.values()) for (const ws of set) ws.terminate();
+    this.byUser.clear();
+    this.wss.close();
+  }
+  onConnection(ws) {
+    ws.alive = true;
+    ws.on("pong", () => {
+      ws.alive = true;
+    });
+    const authTimer = setTimeout(() => ws.close(4001, "auth timeout"), AUTH_TIMEOUT_MS);
+    ws.on("message", (raw) => {
+      let msg;
+      try {
+        msg = JSON.parse(String(raw));
+      } catch {
+        return;
+      }
+      if (msg.type === "auth" && !ws.userId) {
+        try {
+          const claims = verifyAccessToken(String(msg.token || ""));
+          clearTimeout(authTimer);
+          ws.userId = claims.sub;
+          if (!this.byUser.has(claims.sub)) this.byUser.set(claims.sub, /* @__PURE__ */ new Set());
+          this.byUser.get(claims.sub)?.add(ws);
+          ws.send(JSON.stringify({ type: "ready", userId: claims.sub }));
+        } catch {
+          ws.close(4001, "auth failed");
+        }
+      }
+    });
+    ws.on("close", () => {
+      clearTimeout(authTimer);
+      if (ws.userId) {
+        const set = this.byUser.get(ws.userId);
+        set?.delete(ws);
+        if (set && set.size === 0) this.byUser.delete(ws.userId);
+      }
+    });
+    ws.on("error", () => ws.terminate());
+  }
+  send(userId, event2) {
+    const set = this.byUser.get(userId);
+    if (!set) return;
+    const data = JSON.stringify(event2);
+    for (const ws of set) if (ws.readyState === import_ws.WebSocket.OPEN) ws.send(data);
+  }
+  heartbeat() {
+    for (const ws of this.wss.clients) {
+      if (!ws.alive) {
+        ws.terminate();
+        continue;
+      }
+      ws.alive = false;
+      ws.ping();
+    }
+  }
+};
+var realtimePaths = () => {
+  const base = (process.env.BASE_PATH || "").replace(/\/+$/, "");
+  return base ? [`${base}/ws`, "/ws"] : ["/ws"];
+};
+
 // server.ts
 async function startServer() {
   const app = createApp();
@@ -3174,9 +3320,10 @@ async function startServer() {
     });
   }
   if (process.env.DB_NAME) DispatchService.startSweeper();
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Z\xE9nith Backend Server running on http://localhost:${PORT}`);
   });
+  new RealtimeHub(realtimePaths()).attach(server);
 }
 startServer();
 //# sourceMappingURL=server.cjs.map
