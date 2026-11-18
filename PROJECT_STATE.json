@@ -1,16 +1,36 @@
 {
   "project_name": "ZÉNITH — Ecosistema de Transporte Inteligente",
-  "repository_version": "1.1.0-operational",
-  "architecture_version": "2.1.0-mvp-operational",
-  "current_phase": "Zénith MVP V1.1 — Dominio Operativo de Motorizados y Envíos",
-  "current_sprint": "OPS-V1.1",
-  "current_agent": "ZENITH_LEAD_ARCHITECT_AGENT",
-  "active_branch": "main",
-  "last_commit": "OPS-V1.1 — Implementación integral del Dominio Operativo Zénith MVP V1.1 (Casos 02 al 10, Custodia, 4 Protagonistas)",
-  "repository_status": "Build Green — Stable (Zero Warnings)",
-  "next_work_package": "PAY-001 — Recarga de billetera para motorizados mediante Yape (modelo InDrive) y testing E2E",
-  "next_agent": "ZENITH_LEAD_DEVELOPER_AGENT",
+  "repository_version": "2.0.0-mysql-cpanel",
+  "architecture_version": "3.0.0-mysql-cpanel-sin-firebase",
+  "current_phase": "Migración a MySQL en cPanel (sin Firebase): servidor listo, faltan pantallas de la app",
+  "current_sprint": "MYSQL-001",
+  "current_agent": "CLAUDE_SONNET_5_5",
+  "active_branch": "zenith/mysql-login (deploy: rama deploy-cpanel)",
+  "last_commit": "eb3b19e feat(tiempo-real): avisos al instante por WebSocket",
+  "repository_status": "Build Green — lint 0 errores, build OK; servidor real en shocos.nom.pe/zenith-api probado de punta a punta",
+  "next_work_package": "APP-001 — Migrar las pantallas de la app (~40 partes atadas a Firebase) a la API MySQL; revisar mapas/autocompletado para no gastar Google; luego documentos de motorizado + panel admin, billetera/Yape con comisión 10%",
+  "next_agent": "Claude (usar Fable/Opus para pagos y seguridad)",
   "blocked": false,
   "blockers": [],
-  "updated_at": "2026-09-18T07:35:00-07:00"
+  "updated_at": "2026-11-17T21:20:00-05:00",
+  "server": {
+    "url": "https://shocos.nom.pe/zenith-api",
+    "db": "MariaDB shocos_zenith",
+    "done": [
+      "login celular+clave",
+      "pedidos/despacho",
+      "tiempo real WebSocket",
+      "rutas gratis (estimación)"
+    ],
+    "google_routes": "desactivado a propósito; reactivar solo antes del lanzamiento con tope de cuota y alerta de presupuesto"
+  },
+  "decisions": {
+    "comision": "10%, mínimo S/0.50, 0% los primeros 14 días por motorizado nuevo",
+    "login": "SMS solo registro y recuperar clave"
+  },
+  "pending_cleanup": [
+    "borrar app zenith-wstest en cPanel",
+    "código viejo aún usa 13% fijo: leer platform_commission_rate de app_settings al migrar billetera",
+    "rescatar partes útiles de 3 ramas sin fusionar (seguridad financiera)"
+  ]
 }

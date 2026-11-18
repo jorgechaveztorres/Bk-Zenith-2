@@ -58,3 +58,28 @@
 ## Próximos Pasos (Handoff)
 - **Recarga de Billetera vía Yape**: Implementar el módulo de recarga de saldo mediante Yape exclusivo para el motorizado (modelo InDrive: el pasajero no tiene billetera, el motorizado recarga créditos para pagar comisiones/penalidades).
 - **Pruebas E2E**: Ejecutar recorridos simulados de los Casos 02, 03, 08 y 10 para certificar la experiencia visual en el dispositivo móvil del motorizado.
+
+---
+
+# Sesión 2026-11-17 — Migración a MySQL/cPanel (Claude Sonnet 5.5)
+
+## Objetivo
+Dejar el servidor de Zénith funcionando en el cPanel propio (shocos.nom.pe), sin Firebase, con login, pedidos, despacho y avisos en tiempo real.
+
+## Hecho
+- Esquema MySQL (30 tablas) + migración 002 (pedidos) aplicados en `shocos_zenith`.
+- Login celular + clave (bcrypt, JWT 1 h + refresh 30 d con rotación), SMS solo para registro/recuperar clave.
+- Pedidos: cotización firmada, despacho al motorizado aprobado más cercano (≤6 km, GPS <120 s), oferta 15 s, aceptar, código de recojo de 4 dígitos, entrega.
+- Tiempo real por WebSocket (`/zenith-api/ws`): ofertas, estados, ubicación en vivo; la app cae a consulta periódica si falla.
+- Rutas con estimación gratuita por defecto; Google solo con `ROUTE_PROVIDER=google`.
+- Comisión configurable en `app_settings` (10%, mín. S/0.50, 14 días gratis).
+- Desplegado en el servidor real y probado de punta a punta; usuarios de prueba borrados.
+
+## Archivos clave
+`database/schema.sql`, `database/migrations/002_pedidos.sql`, `server/services/*` (auth, dispatch, ride, driver, routes, pricing, settings, sms), `server/routes/*`, `server/realtime/*`, `server/config/mysql.ts`, `deploy/cpanel/package.json`. Pruebas: `test:auth` (23), `test:rides` (38), `test:realtime` (13), pricing (23), geo (42).
+
+## Pendiente
+Ver `next_work_package` en PROJECT_STATE.json. Limpieza: app `zenith-wstest`, 13% fijo viejo, ramas sin fusionar.
+
+## Entorno
+Despliegue: push a GitHub → rama `deploy-cpanel` → copiar `dist/server.cjs` y `package.json` a `/home/shocos/zenith-deploy` → NPM Install y reiniciar en Node.js Selector. Único log persistente: `stderr.log`. phpMyAdmin pide confirmación manual en cada DELETE.

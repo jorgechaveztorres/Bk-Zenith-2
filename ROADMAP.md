@@ -5,9 +5,9 @@ Este documento define la trayectoria técnica del proyecto **ZÉNITH**, dividida
 ---
 
 ## Estado Actual
-- **Fase Activa:** Fase 3 — Dominio Operativo Zénith MVP V1.1 (Completado) & Recarga Yape para Motorizados (En curso)
-- **Sprint Activo:** Sprint OPS-V1.1 (Completado) & Sprint PAY-001 (Siguiente)
-- **Progreso Global Estimado:** **92%**
+- **Fase Activa:** Migración a MySQL en cPanel (servidor 100 %, pantallas de la app 0 %)
+- **Sprint Activo:** MYSQL-001 (servidor completado) → APP-001 (pantallas, siguiente)
+- **Progreso Global Estimado:** **~55%** (servidor listo; faltan pantallas de la app, documentos/admin, billetera, APK)
 
 ---
 
@@ -73,3 +73,14 @@ Fase 6: Despliegue y Prod              ░░░░░░░░░░░░░�
 - [ ] Optimización de índices compuestos de Firestore.
 - [ ] Pruebas de estrés y volumen para transacciones contables simultáneas.
 - [ ] Paso de entorno de homologación (Pruebas) a Producción real en SUNAT.
+
+
+---
+
+## Avance MySQL/cPanel (2026-11-17)
+- [x] Esquema, login, pedidos/despacho, tiempo real, rutas gratis, despliegue y prueba real.
+- [ ] APP-001: migrar ~40 pantallas de la app desde Firebase.
+- [ ] Documentos del motorizado + panel de aprobación del admin.
+- [ ] Billetera/Yape con comisión 10 % (mín. S/ 0.50, 14 días gratis).
+- [ ] APK y prueba con 3–5 motorizados; SMS real; términos y privacidad; respaldos de la BD.
+- [ ] Antes del lanzamiento: Google Routes con tope de cuota y alerta de presupuesto.

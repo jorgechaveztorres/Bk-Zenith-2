@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.0-mysql-cpanel] - 2026-11-17
+### Added
+- Servidor en MySQL/MariaDB (cPanel) sin Firebase: login celular + clave, pedidos y despacho, código de recojo, avisos en tiempo real por WebSocket.
+- Rutas con estimación gratuita (`EstimateRouteProvider`); Google Routes opcional con `ROUTE_PROVIDER=google`.
+- Comisión configurable en `app_settings` (10 %, mínimo S/ 0.50, 14 días gratis).
+- Pruebas: auth (23), pedidos (38), tiempo real (13).
+### Changed
+- Firebase es opcional (`FIREBASE_DISABLED=true`); rutas de pedidos y precios reescritas para MySQL.
+### Removed
+- Controlador y pruebas antiguas que dependían del emulador de Firebase.
+
 ## [1.1.0-operational] - 2026-09-18
 ### Added
 - **Operational Domain Zénith MVP V1.1**: Full operational domain engine (`OperationalEngine.ts`) mapping the operational rules for motorcycle parcel delivery and passenger requests.
