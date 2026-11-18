@@ -3,7 +3,7 @@
  * Sesión propia (celular + clave) -> pantalla de cliente o de motorizado según el rol.
  */
 import React, { useEffect, useState } from 'react';
-import { LogOut, Car, User as UserIcon } from 'lucide-react';
+import { LogOut, Car, User as UserIcon, Store } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AuthApi } from './api/endpoints';
 import { ApiError, getSessionUser, hasSession, onSessionChange } from './api/http';
@@ -12,13 +12,18 @@ import type { ApiUser } from './api/types';
 import PhoneAuth from './components/auth/PhoneAuth';
 import PassengerHome from './components/app/PassengerHome';
 import DriverHome from './components/app/DriverHome';
+import RestaurantHome from './components/app/RestaurantHome';
 
 export default function App() {
   const [user, setUser] = useState<ApiUser | null>(getSessionUser());
   const [checking, setChecking] = useState(hasSession());
+  const [showRestaurant, setShowRestaurant] = useState(false);
 
   // Mantener la vista al día con la sesión (login, renovación fallida, logout).
-  useEffect(() => onSessionChange(setUser), []);
+  useEffect(() => onSessionChange((u) => {
+    setUser(u);
+    if (!u) setShowRestaurant(false);
+  }), []);
 
   // Al abrir la app con sesión guardada: confirmar con el servidor que sigue vigente.
   useEffect(() => {
@@ -79,6 +84,14 @@ export default function App() {
                 <p className="text-sm font-bold truncate max-w-[140px]">{user.fullName}</p>
               </div>
               <button
+                onClick={() => setShowRestaurant((v) => !v)}
+                className={`p-2.5 rounded-xl border ${showRestaurant ? 'bg-[#39FF14]/10 border-[#39FF14] text-[#39FF14]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
+                aria-label="Mi restaurante"
+                title="Mi restaurante"
+              >
+                <Store size={16} />
+              </button>
+              <button
                 onClick={() => {
                   if (window.confirm('¿Cerrar sesión?')) void AuthApi.logout();
                 }}
@@ -95,13 +108,15 @@ export default function App() {
       <main className="max-w-xl mx-auto px-5 pt-24 pb-16">
         <AnimatePresence mode="wait">
           <motion.div
-            key={user ? `${user.id}-${user.role}` : 'auth'}
+            key={user ? `${user.id}-${user.role}-${showRestaurant ? 'rest' : 'home'}` : 'auth'}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
           >
             {!user ? (
               <PhoneAuth onSignedIn={setUser} />
+            ) : showRestaurant ? (
+              <RestaurantHome />
             ) : isDriver ? (
               <DriverHome user={user} />
             ) : (

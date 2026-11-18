@@ -3,7 +3,10 @@
  * Rutas del servidor: server/routes/auth.routes.ts, ride.routes.ts, pricing.routes.ts.
  */
 import { api, saveSession, clearSession, getRefreshToken, updateSessionUser } from './http';
-import type { ApiSession, ApiUser, AppRole, ApiRide, ApiQuote, ApiOffer, DeliveryDetails, Place } from './types';
+import type {
+  ApiSession, ApiUser, AppRole, ApiRide, ApiQuote, ApiOffer, DeliveryDetails, Place,
+  ApiRestaurant, ApiMenuItem,
+} from './types';
 
 export const MIN_PASSWORD = 6;
 
@@ -79,6 +82,59 @@ export const RidesApi = {
   get: async (rideId: string) => (await api<{ ride: ApiRide }>('GET', `/rides/${encodeURIComponent(rideId)}`)).ride,
   cancel: async (rideId: string, reason?: string) =>
     (await api<{ ride: ApiRide }>('POST', `/rides/${encodeURIComponent(rideId)}/cancel`, { reason })).ride,
+};
+
+// ---------------------------------------------------------------- Marketplace de comida
+export interface MenuItemInput {
+  name: string;
+  description?: string;
+  price: number;
+  photoUrl?: string;
+  isAvailable?: boolean;
+  sortOrder?: number;
+}
+
+export const FoodApi = {
+  /** Restaurantes abiertos para pedir comida. */
+  listOpen: async (city?: string) =>
+    (await api<{ restaurants: ApiRestaurant[] }>('GET', `/restaurants${city ? `?city=${encodeURIComponent(city)}` : ''}`)).restaurants,
+
+  menu: async (restaurantId: string) =>
+    (await api<{ menu: ApiMenuItem[] }>('GET', `/restaurants/${encodeURIComponent(restaurantId)}/menu`)).menu,
+
+  /** Crea el pedido de comida: la cotización es la misma de /pricing/quote (origin=restaurante, destination=cliente). */
+  order: async (
+    restaurantId: string,
+    quote: ApiQuote,
+    items: Array<{ menuItemId: string; quantity: number }>,
+    paymentMethod: string,
+    notes?: string,
+    idempotencyKey = newIdempotencyKey(),
+  ) => {
+    const r = await api<{ ride: ApiRide; otpCode: string; subtotal: number }>(
+      'POST', `/restaurants/${encodeURIComponent(restaurantId)}/orders`,
+      { quote, items, paymentMethod, notes, idempotencyKey }
+    );
+    return { ride: { ...r.ride, otpCode: r.otpCode }, subtotal: r.subtotal };
+  },
+
+  // ---- Dueño del restaurante ----
+  mine: async () => (await api<{ restaurant: ApiRestaurant | null }>('GET', '/restaurants/mine')).restaurant,
+
+  create: async (input: { name: string; address: string; lat: number; lng: number; city?: string; phone?: string; photoUrl?: string }) =>
+    (await api<{ restaurant: ApiRestaurant }>('POST', '/restaurants/mine', input)).restaurant,
+
+  setOpen: async (restaurantId: string, isOpen: boolean) =>
+    (await api<{ restaurant: ApiRestaurant }>('PATCH', `/restaurants/${encodeURIComponent(restaurantId)}/open`, { isOpen })).restaurant,
+
+  myMenu: async (restaurantId: string) =>
+    (await api<{ menu: ApiMenuItem[] }>('GET', `/restaurants/${encodeURIComponent(restaurantId)}/menu/mine`)).menu,
+
+  addMenuItem: async (restaurantId: string, input: MenuItemInput) =>
+    (await api<{ item: ApiMenuItem }>('POST', `/restaurants/${encodeURIComponent(restaurantId)}/menu`, input)).item,
+
+  updateMenuItem: async (restaurantId: string, itemId: string, input: Partial<MenuItemInput>) =>
+    (await api<{ item: ApiMenuItem }>('PATCH', `/restaurants/${encodeURIComponent(restaurantId)}/menu/${encodeURIComponent(itemId)}`, input)).item,
 };
 
 // ---------------------------------------------------------------- Motorizado

@@ -181,7 +181,7 @@ export interface RequestOptions {
   auth?: boolean;
 }
 
-export const api = async <T>(method: 'GET' | 'POST', path: string, body?: unknown, opts: RequestOptions = {}): Promise<T> => {
+export const api = async <T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown, opts: RequestOptions = {}): Promise<T> => {
   if (opts.auth === false) return rawRequest<T>(method, path, body, null);
 
   const token = await getAccessToken();

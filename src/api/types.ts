@@ -51,6 +51,48 @@ export interface DeliveryDetails {
   notes?: string;
 }
 
+export type OrderType = 'DELIVERY' | 'FOOD';
+
+export interface FoodOrderItem {
+  menuItemId: string;
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+export interface FoodOrderDetails {
+  restaurantId: string;
+  restaurantName: string;
+  items: FoodOrderItem[];
+  subtotal: number;
+  notes?: string;
+}
+
+export interface ApiRestaurant {
+  id: string;
+  ownerUserId: string;
+  name: string;
+  phone: string | null;
+  address: string;
+  lat: number;
+  lng: number;
+  city: string | null;
+  photoUrl: string | null;
+  isOpen: boolean;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface ApiMenuItem {
+  id: string;
+  name: string;
+  description: string | null;
+  price: number;
+  photoUrl: string | null;
+  isAvailable: boolean;
+  sortOrder: number;
+}
+
 export interface ApiRide {
   id: string;
   status: ApiRideStatus;
@@ -66,6 +108,9 @@ export interface ApiRide {
   distanceKm: number | null;
   paymentMethod: string;
   delivery: DeliveryDetails | null;
+  orderType: OrderType;
+  food: FoodOrderDetails | null;
+  restaurantId: string | null;
   createdAt: string;
   acceptedAt: string | null;
   startedAt: string | null;

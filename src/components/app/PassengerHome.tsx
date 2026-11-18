@@ -10,6 +10,7 @@ import { useRealtime, useRealtimeConnected, usePolling } from '../../api/hooks';
 import { ACTIVE_RIDE_STATUSES, ApiQuote, ApiRide, ApiUser, GeoPoint, Place } from '../../api/types';
 import AddressPicker from './AddressPicker';
 import ZenithMap from './ZenithMap';
+import FoodOrder from './FoodOrder';
 import { Card, PrimaryButton, GhostButton, ErrorText, Row, PlaceLine, soles, STATUS_LABEL, PAYMENT_LABEL } from './ui';
 
 type Payment = 'cash' | 'yape' | 'plin';
@@ -21,6 +22,7 @@ export default function PassengerHome({ user }: { user: ApiUser }) {
   const [loading, setLoading] = useState(true);
   const [ride, setRide] = useState<ApiRide | null>(null);
   const [finished, setFinished] = useState<ApiRide | null>(null);
+  const [tab, setTab] = useState<'encomienda' | 'comida'>('encomienda');
 
   // Formulario
   const [origin, setOrigin] = useState<Place | null>(null);
@@ -162,7 +164,7 @@ export default function PassengerHome({ user }: { user: ApiUser }) {
           <h2 className="text-xl font-black uppercase italic">{STATUS_LABEL[finished.status]}</h2>
         </div>
         <PlaceLine tag="Entrega" address={finished.destination.address} />
-        {ok && <Row label="Total" value={`${soles(finished.price)} · ${PAYMENT_LABEL[finished.paymentMethod] || finished.paymentMethod}`} />}
+        {ok && <Row label="Total" value={`${soles(finished.food ? finished.food.subtotal + finished.price : finished.price)} · ${PAYMENT_LABEL[finished.paymentMethod] || finished.paymentMethod}`} />}
         <PrimaryButton onClick={newOrder}>Hacer otro pedido</PrimaryButton>
       </Card>
     );
@@ -191,9 +193,27 @@ export default function PassengerHome({ user }: { user: ApiUser }) {
                 : ride.driverName}
             />
           )}
-          <PlaceLine tag="Recojo" address={ride.origin.address} />
-          <PlaceLine tag="Entrega" address={ride.destination.address} />
-          <Row label="Total" value={`${soles(ride.price)} · ${PAYMENT_LABEL[ride.paymentMethod] || ride.paymentMethod}`} />
+          {ride.food ? (
+            <>
+              <PlaceLine tag="Recojo" address={`${ride.food.restaurantName} — ${ride.origin.address}`} />
+              <PlaceLine tag="Entrega" address={ride.destination.address} />
+              <div className="space-y-1">
+                {ride.food.items.map((it) => (
+                  <React.Fragment key={it.menuItemId}>
+                    <Row label={`${it.quantity}x ${it.name}`} value={soles(it.price * it.quantity)} />
+                  </React.Fragment>
+                ))}
+                <Row label="Comida" value={soles(ride.food.subtotal)} />
+                <Row label="Envío" value={soles(ride.price)} />
+              </div>
+            </>
+          ) : (
+            <>
+              <PlaceLine tag="Recojo" address={ride.origin.address} />
+              <PlaceLine tag="Entrega" address={ride.destination.address} />
+            </>
+          )}
+          <Row label="Total" value={`${soles(ride.food ? ride.food.subtotal + ride.price : ride.price)} · ${PAYMENT_LABEL[ride.paymentMethod] || ride.paymentMethod}`} />
           {ride.status !== 'IN_PROGRESS' && <GhostButton disabled={busy} onClick={cancel}>Cancelar pedido</GhostButton>}
           <ErrorText text={error} />
         </Card>
@@ -204,6 +224,23 @@ export default function PassengerHome({ user }: { user: ApiUser }) {
   return (
     <div className="space-y-4">
       {conn}
+      <div className="grid grid-cols-2 gap-2 text-xs font-mono uppercase font-bold">
+        {(['encomienda', 'comida'] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={`py-2.5 rounded-xl border ${tab === t ? 'border-[#39FF14] text-[#39FF14] bg-[#39FF14]/10' : 'border-white/10 text-gray-400'}`}
+          >
+            {t === 'encomienda' ? 'Enviar algo' : 'Pedir comida'}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'comida' ? (
+        <FoodOrder onOrdered={(r) => setRide(r)} />
+      ) : (
+      <>
       <ZenithMap origin={origin} destination={destination} onPick={pickOnMap} />
       <div className="flex gap-2 text-[10px] font-mono uppercase">
         <span className="text-gray-500 self-center">Tocar el mapa para:</span>
@@ -262,6 +299,8 @@ export default function PassengerHome({ user }: { user: ApiUser }) {
         )}
         <ErrorText text={error} />
       </Card>
+      </>
+      )}
     </div>
   );
 }
