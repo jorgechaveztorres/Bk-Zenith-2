@@ -1,0 +1,88 @@
+name: ZENITH APK (MySQL / cPanel)
+
+# Compila el APK de prueba (debug) apuntando a la API de cPanel.
+# Se ejecuta solo al subir cambios de la app a zenith/mysql-login, o a mano desde Actions.
+on:
+  push:
+    branches:
+      - zenith/mysql-login
+    paths:
+      - 'src/**'
+      - 'android/**'
+      - 'index.html'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'capacitor.config.json'
+      - 'vite.config.ts'
+      - '.github/workflows/build-apk-mysql.yml'
+  workflow_dispatch:
+    inputs:
+      api_base:
+        description: 'Dirección de la API (https, sin / final)'
+        required: false
+        default: 'https://shocos.nom.pe/zenith-api'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VITE_API_BASE: ${{ inputs.api_base || 'https://shocos.nom.pe/zenith-api' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Revisar TypeScript
+        run: npm run lint
+
+      - name: Compilar la app web
+        run: |
+          case "$VITE_API_BASE" in https://*) ;; *) echo "::error::La API debe ser https"; exit 1;; esac
+          npx vite build
+          # El servidor no va dentro del APK.
+          rm -f dist/server.cjs dist/server.cjs.map
+
+      - name: Copiar la app al proyecto Android
+        run: npx cap sync android
+
+      - name: Compilar APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Nombrar APK
+        id: apk
+        run: |
+          SHORT=$(git rev-parse --short HEAD)
+          OUT="zenith-mysql-${SHORT}.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$OUT"
+          ls -lh "$OUT"
+          echo "file=$OUT" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zenith-apk
+          path: ${{ steps.apk.outputs.file }}
+          if-no-files-found: error
+          retention-days: 14
