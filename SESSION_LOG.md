@@ -1,5 +1,24 @@
 # Registro de Sesión
 
+**Fecha:** 17 de Noviembre de 2026 (parte 2)
+**Agente:** Claude (Sonnet 5)
+**Fase:** MySQL/cPanel — Billetera (deuda de comisión) + recarga Yape manual
+
+## Objetivo Completado
+- Billetera del motorizado con modelo InDrive: el cliente paga en efectivo/Yape directo al motorizado; el motorizado le debe a Zénith la comisión de cada pedido completado (10%, mínimo S/ 0.50, 0% los primeros 14 días desde su aprobación).
+- Backend: migración `005_wallet_topup.sql`; `wallet.service.ts` cobra la comisión dentro de la misma transacción que completa el pedido (`ride.service.ts`) y bloquea la conexión del motorizado si su deuda supera S/ 50 (`driver.service.ts`); `topup.service.ts` con el flujo manual de recarga Yape (sin OCR/IA): pedir con monto + número de operación, el admin acredita o rechaza con motivo.
+- Se encontró que el backend de wallet/topup que ya existía (`wallet.controller.ts`, `topup.controller.ts`, `WalletService`/`TopupService` viejos) seguía 100% atado a Firebase/Firestore — nunca se migró a MySQL y estaba desactivado en producción (`FIREBASE_DISABLED=true`). Se reemplazó por completo y se borraron esos archivos muertos, junto con el test `test/topup-v1-suite.ts` que dependía del emulador de Firebase.
+- App: `WalletHome.tsx` (deuda, días gratis, pedir recarga, historial) con ícono de billetera en el header solo para motorizados; pestaña "Recargas" dentro del panel admin (`AdminTopups.tsx`).
+- Prueba `test:wallet` (20 aserciones) contra MariaDB real. Suite completa 147/147 en verde (`npm run lint` y `npm run build` también limpios).
+- Nota de entorno: el contenedor había perdido el servicio MariaDB y el `.env` de la sesión anterior (se reinició entre sesiones); hubo que recrear el usuario root de MariaDB (vía `--skip-grant-tables`), la base de prueba `zt`, el `.env` local y reaplicar `schema.sql` + las 5 migraciones antes de poder correr cualquier prueba.
+
+## Pendiente / Siguiente
+- No hay un paquete siguiente explícitamente pedido por el usuario — su pedido de "panel para aprobar y luego la billetera" quedó completo con esta sesión.
+- Ideas para la próxima iteración (no pedidas aún): subir foto del comprobante Yape con OCR/IA (hoy la recarga es 100% manual), documentos del motorizado (fotos de licencia/brevete), calificación, historial de pedidos, limpiar pantallas y servicios viejos de Firebase que ya no usa `App.tsx` (`DriverFlow.tsx`, `ControlCenter.tsx`, `OperationalEngine.ts`, `src/services/WalletService.ts`, `ride-settlement.service.ts`, rutas `settlement/payment/audit/ledger`).
+- No se hizo verificación visual con Playwright de las pantallas nuevas (sí se verificó con 20 pruebas de backend contra la API real, igual que el panel admin de la sesión anterior).
+
+---
+
 **Fecha:** 17 de Noviembre de 2026
 **Agente:** Claude (Sonnet 5)
 **Fase:** MySQL/cPanel — Panel de aprobación de motorizados

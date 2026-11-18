@@ -3,16 +3,16 @@
   "repository_version": "2.1.0-app-mysql",
   "architecture_version": "3.0.0-mysql-cpanel-sin-firebase",
   "current_phase": "Migración a MySQL en cPanel (sin Firebase): servidor listo y app núcleo (login, cliente, motorizado) ya sobre la API",
-  "current_sprint": "Panel admin aprobar/rechazar motorizados completado. Siguiente: billetera/Yape.",
+  "current_sprint": "Billetera (deuda de comisión) + recarga Yape manual completada. Siguiente: a decidir con el usuario.",
   "current_agent": "CLAUDE_OPUS_5_5",
   "active_branch": "zenith/mysql-login (deploy: rama deploy-cpanel)",
-  "last_commit": "feat(admin): panel de aprobación/rechazo de motorizados",
-  "repository_status": "Build Green — tsc 0 errores, build OK; pruebas auth 23, rides 38, realtime 13, app 27, food 15, admin 11, pricing 23, geo 42 contra MariaDB local (127 en total entre las que corren vía npm run test:*)",
-  "next_work_package": "Panel admin completado: ya no hace falta aprobar motorizados a mano por phpMyAdmin. Backend: migración 004 (rejection_reason/reviewed_by/reviewed_at en driver_profiles), admin.service.ts, /api/admin/drivers (listar con filtro ?status=, aprobar, rechazar con motivo obligatorio), reutiliza users.is_admin + requireAppRole(['admin']) + audit_logs. 11 pruebas (test:admin). App: AdminHome.tsx (pestañas Pendientes/Aprobados/Rechazados, aprobar/rechazar con motivo), accesible por el ícono de escudo en el header solo si user.isAdmin. Nota: el claim 'adm' queda fijo en el token al iniciar sesión — si se otorga is_admin=1 por SQL directo, esa cuenta necesita volver a loguearse para que el panel la deje entrar. Siguiente paquete: billetera/Yape (Culqi), revisando antes el esquema ya existente (wallets, wallet_movements, topup_requests, topup_audit, bank_movements, processed_bank_movements, ride_settlements, accounting_entries, accounting_lines) y wallet.routes.ts/topup.routes.ts.",
-  "next_agent": "Claude (usar Fable/Opus para pagos y seguridad)",
+  "last_commit": "feat(wallet): billetera de deuda de comisión y recarga Yape manual",
+  "repository_status": "Build Green — tsc 0 errores, build OK; pruebas auth 23, rides 38, realtime 13, app 27, food 15, admin 11, wallet 20 (147 en total) contra MariaDB local",
+  "next_work_package": "Billetera completada con modelo InDrive (el cliente paga en efectivo/Yape directo al motorizado; el motorizado le debe a Zénith la comisión de cada pedido). Backend: migración 005 (operation_number/rejection_reason/reviewed_by/reviewed_at en topup_requests; setting wallet_debt_limit=50), wallet.service.ts (cobra comisión al completar un pedido salvo los new_driver_free_days=14 desde la aprobación, bloquea la conexión si la deuda > wallet_debt_limit, aplica recargas acreditadas), topup.service.ts (flujo manual V1 sin OCR/IA: motorizado pide con monto + nº de operación Yape; admin acredita o rechaza con motivo). Rutas: GET /wallet/me, GET /wallet/movements, POST /topups, GET /topups/mine, y para el admin GET /topups?status=, POST /topups/:id/credit, POST /topups/:id/reject. App: WalletHome.tsx (deuda, días gratis, pedir recarga, historial) con ícono de billetera solo para motorizados; pestaña 'Recargas' dentro del panel admin (AdminTopups.tsx). Se eliminaron los controladores/test de wallet y topup que seguían atados a Firebase (dead code, nunca migrado, desactivado en producción). Prueba test:wallet (20 casos). Pendiente para una siguiente iteración si se necesita: subir foto del comprobante Yape / OCR automático (hoy es 100% manual), reconciliación con movimientos bancarios reales. Siguientes paquetes posibles (sin pedir aún): documentos del motorizado (fotos de licencia/brevete), calificación, historial de pedidos, limpieza de pantallas viejas de Firebase (DriverFlow/ControlCenter/etc., no usadas por App.tsx pero siguen en el repo).",
+  "next_agent": "Claude",
   "blocked": false,
   "blockers": [],
-  "updated_at": "2026-11-17T18:05:00-05:00",
+  "updated_at": "2026-11-17T19:10:00-05:00",
   "server": {
     "url": "https://shocos.nom.pe/zenith-api",
     "db": "MariaDB shocos_zenith",
@@ -31,9 +31,9 @@
   },
   "pending_cleanup": [
     "borrar app zenith-wstest en cPanel",
-    "código viejo aún usa 13% fijo: leer platform_commission_rate de app_settings al migrar billetera",
     "rescatar partes útiles de 3 ramas sin fusionar (seguridad financiera)",
-    "borrar componentes/servicios viejos atados a Firebase cuando APP-002/003 los reemplacen"
+    "borrar pantallas/servicios viejos de Firebase sin usar (DriverFlow, ControlCenter, PassengerFlow, OperationalEngine, src/services/WalletService.ts, etc. — ya no los importa App.tsx)",
+    "ride-settlement.service.ts y settlement/payment/audit/ledger routes siguen en Firebase/Firestore y no se usan desde la app MySQL; revisar si se borran o se migran"
   ],
   "app": {
     "done": [
@@ -42,13 +42,14 @@
       "login celular+clave, registro y recuperar clave por SMS",
       "cliente: mapa OpenStreetMap, buscar/tocar/GPS, precio, pedir, seguir en vivo, código, cancelar",
       "motorizado: conectarse con GPS, oferta 15 s, aceptar/rechazar, en camino, llegué, código, entregado, navegación con Google Maps/Waze por enlace",
-      "marketplace de comida: RestaurantHome (publicar/menú/abrir-cerrar) y FoodOrder (navegar/pedir), reusa el motor de precio/despacho"
+      "marketplace de comida: RestaurantHome (publicar/menú/abrir-cerrar) y FoodOrder (navegar/pedir), reusa el motor de precio/despacho",
+      "panel admin: aprobar/rechazar motorizados (AdminHome.tsx)",
+      "billetera: deuda de comisión + recarga Yape manual (WalletHome.tsx, AdminTopups.tsx)"
     ],
     "mapa": "OpenStreetMap + Leaflet (gratis); antes del lanzamiento con mucho tráfico cambiar tiles/buscador a proveedor pagado o propio",
     "firebase_en_bundle": false,
     "pendiente": [
-      "documentos motorizado + admin",
-      "billetera/Yape",
+      "documentos motorizado (fotos de licencia/brevete)",
       "calificación",
       "historial de pedidos",
       "pantallas viejas sin usar (PassengerFlow, DriverFlow, admin, LSO, heart test) — borrar o migrar"

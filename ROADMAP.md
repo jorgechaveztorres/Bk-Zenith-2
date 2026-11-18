@@ -93,7 +93,8 @@ Fase 6: Despliegue y Prod              ░░░░░░░░░░░░░�
 - [x] APP-001: migrar login/cliente/motorizado de Firebase a MySQL.
 - [x] Marketplace de comida (FOOD-001): publicar restaurante, menú, pedidos, comisión de envío.
 - [x] Panel de aprobación del admin (parte de APP-002): aprobar/rechazar motorizados desde la app, ya no por phpMyAdmin.
+- [x] Billetera/Yape: deuda de comisión 10 % (mín. S/ 0.50, 14 días gratis para motorizados nuevos), recarga Yape manual revisada por el admin, bloqueo al superar la deuda límite.
 - [ ] Documentos del motorizado (subida de fotos de licencia/brevete) — pendiente, no pedido aún.
-- [ ] Billetera/Yape con comisión 10 % (mín. S/ 0.50, 14 días gratis). — EN CURSO
+- [ ] Recarga Yape con OCR/IA del comprobante (hoy es 100% manual: el motorizado escribe el número de operación).
 - [ ] APK y prueba con 3–5 motorizados; SMS real; términos y privacidad; respaldos de la BD.
 - [ ] Antes del lanzamiento: Google Routes con tope de cuota y alerta de presupuesto.
