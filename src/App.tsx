@@ -3,7 +3,7 @@
  * Sesión propia (celular + clave) -> pantalla de cliente o de motorizado según el rol.
  */
 import React, { useEffect, useState } from 'react';
-import { LogOut, Car, User as UserIcon, Store, ShieldCheck } from 'lucide-react';
+import { LogOut, Car, User as UserIcon, Store, ShieldCheck, Wallet } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AuthApi } from './api/endpoints';
 import { ApiError, getSessionUser, hasSession, onSessionChange } from './api/http';
@@ -14,8 +14,9 @@ import PassengerHome from './components/app/PassengerHome';
 import DriverHome from './components/app/DriverHome';
 import RestaurantHome from './components/app/RestaurantHome';
 import AdminHome from './components/app/AdminHome';
+import WalletHome from './components/app/WalletHome';
 
-type View = 'home' | 'restaurant' | 'admin';
+type View = 'home' | 'restaurant' | 'admin' | 'wallet';
 
 export default function App() {
   const [user, setUser] = useState<ApiUser | null>(getSessionUser());
@@ -94,6 +95,16 @@ export default function App() {
               >
                 <Store size={16} />
               </button>
+              {isDriver && (
+                <button
+                  onClick={() => setView((v) => (v === 'wallet' ? 'home' : 'wallet'))}
+                  className={`p-2.5 rounded-xl border ${view === 'wallet' ? 'bg-[#39FF14]/10 border-[#39FF14] text-[#39FF14]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
+                  aria-label="Mi billetera"
+                  title="Mi billetera"
+                >
+                  <Wallet size={16} />
+                </button>
+              )}
               {user.isAdmin && (
                 <button
                   onClick={() => setView((v) => (v === 'admin' ? 'home' : 'admin'))}
@@ -132,6 +143,8 @@ export default function App() {
               <RestaurantHome />
             ) : view === 'admin' && user.isAdmin ? (
               <AdminHome />
+            ) : view === 'wallet' && isDriver ? (
+              <WalletHome />
             ) : isDriver ? (
               <DriverHome user={user} />
             ) : (

@@ -1,396 +1,140 @@
-// ============================================================================
-// ZÉNITH
-// Module : Financial / Topup Service (Pilot V1 - Yape Personal con Validación Humana)
-// Layer  : Domain / Services
-// File   : topup.service.ts
-// ============================================================================
-
-import { db } from '../config/firebase';
-import { FieldValue } from 'firebase-admin/firestore';
-import { TopupRequest, TopupAuditEntry } from '../../src/types';
-import { ReconciliationService, BankMovementInput } from './reconciliation.service';
+/**
+ * ZÉNITH — RECARGA YAPE DEL MOTORIZADO (MySQL, V1 manual)
+ *
+ * El motorizado yapea a la cuenta de Zénith y escribe el número de operación.
+ * Un admin revisa esa lista y confirma (acredita contra su deuda) o rechaza.
+ * Sin OCR/IA en esta versión: eso queda para una siguiente iteración si hace falta.
+ */
+import type { RowDataPacket } from 'mysql2/promise';
+import { getPool, withTransaction } from '../config/mysql';
 import { WalletService } from './wallet.service';
+import { HttpError } from './http-error';
 
-export const TopupService = {
-  /**
-   * Genera un código de referencia no predecible de 6 caracteres alfanuméricos.
-   * Ejemplo: ZNTH-482910 o ZNTH-K7P9X2
-   */
-  generateReferenceCode: (): string => {
-    const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // Sin 0, 1, O, I para evitar confusión visual
-    let randomPart = '';
-    for (let i = 0; i < 6; i++) {
-      randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return `ZNTH-${randomPart}`;
-  },
+export type TopupStatus = 'RECEIPT_SUBMITTED' | 'REJECTED' | 'CREDITED';
 
-  /**
-   * 1. MOTORIZADO SOLICITA RECARGA
-   * Valida monto, genera ID único, código de referencia y auditoría inicial.
-   * REGLA FAIL-CLOSED: La persistencia en Firestore es OBLIGATORIA. Si falla, la operación aborta.
-   */
-  createTopupRequest: async (
-    driverId: string,
-    requestedAmount: number,
-    driverMeta: { name?: string; phone?: string }
-  ): Promise<TopupRequest> => {
-    if (!requestedAmount || typeof requestedAmount !== 'number' || requestedAmount <= 0) {
-      throw new Error('MONTO_INVALIDO: El monto de recarga debe ser un número positivo mayor a S/ 0.00.');
-    }
+export interface TopupView {
+  id: string;
+  driverId: string;
+  driverName: string | null;
+  driverPhone: string | null;
+  requestedAmount: number;
+  operationNumber: string | null;
+  status: TopupStatus;
+  rejectionReason: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  creditedAt: string | null;
+  createdAt: string;
+}
 
-    if (!driverId) {
-      throw new Error('AUTH_ERROR: Identificador de conductor requerido.');
-    }
+const toIso = (v: unknown): string | null => (v instanceof Date ? v.toISOString() : v ? String(v) : null);
+const money = (n: number): number => Math.round(n * 100) / 100;
 
-    if (!db) {
-      throw new Error('FIRESTORE_UNAVAILABLE: La base de datos central no está disponible.');
-    }
+const newId = (): string => `tp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+const newReference = (): string => `Z-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
-    const now = new Date();
-    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
-    const randomSuffix = Math.floor(100000 + Math.random() * 900000);
-    const topupId = `TOPUP-${dateStr}-${randomSuffix}`;
-    const referenceCode = TopupService.generateReferenceCode();
+const SELECT = `
+  SELECT t.id, t.driver_id, t.requested_amount, t.operation_number, t.status,
+         t.rejection_reason, t.reviewed_by, t.reviewed_at, t.credited_at, t.created_at,
+         u.full_name AS driver_name, u.phone AS driver_phone
+  FROM topup_requests t JOIN users u ON u.id = t.driver_id
+`;
 
-    // Expiración por defecto: 24 horas
-    const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+const toView = (r: RowDataPacket): TopupView => ({
+  id: String(r.id),
+  driverId: String(r.driver_id),
+  driverName: r.driver_name ?? null,
+  driverPhone: r.driver_phone ?? null,
+  requestedAmount: money(Number(r.requested_amount)),
+  operationNumber: r.operation_number ?? null,
+  status: r.status as TopupStatus,
+  rejectionReason: r.rejection_reason ?? null,
+  reviewedBy: r.reviewed_by ?? null,
+  reviewedAt: toIso(r.reviewed_at),
+  creditedAt: toIso(r.credited_at),
+  createdAt: toIso(r.created_at) || '',
+});
 
-    const initialAudit: TopupAuditEntry = {
-      fromStatus: 'NONE',
-      toStatus: 'CREATED',
-      timestamp: now.toISOString(),
-      actorId: driverId,
-      actorRole: 'driver',
-      reason: `Solicitud de recarga creada por S/ ${requestedAmount.toFixed(2)}`,
-      metadata: { requestedAmount, referenceCode }
-    };
-
-    const newTopup: TopupRequest = {
-      id: topupId,
-      referenceCode,
-      driverId,
-      driverName: driverMeta.name || 'Conductor ZÉNITH',
-      driverPhone: driverMeta.phone || '',
-      requestedAmount: Number(requestedAmount.toFixed(2)),
-      status: 'CREATED',
-      auditHistory: [initialAudit],
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      expiresAt
-    };
-
-    // Escritura estricta en Firestore. Sin silenciar errores.
-    await db.collection('topup_requests').doc(topupId).set({
-      ...newTopup,
-      createdAtServer: FieldValue.serverTimestamp(),
-      updatedAtServer: FieldValue.serverTimestamp()
-    });
-
-    return newTopup;
-  },
-
-  /**
-   * Obtener una solicitud de recarga por ID directamente de Firestore.
-   */
-  getTopupById: async (topupId: string): Promise<TopupRequest | null> => {
-    if (!db) throw new Error('FIRESTORE_UNAVAILABLE: Base de datos no disponible.');
-    const snap = await db.collection('topup_requests').doc(topupId).get();
-    if (!snap.exists) return null;
-    return snap.data() as TopupRequest;
-  },
-
-  /**
-   * Obtener el historial de solicitudes de un motorizado directamente de Firestore.
-   */
-  getDriverTopupHistory: async (driverId: string): Promise<TopupRequest[]> => {
-    if (!db) throw new Error('FIRESTORE_UNAVAILABLE: Base de datos no disponible.');
-    const snap = await db.collection('topup_requests')
-      .where('driverId', '==', driverId)
-      .limit(25)
-      .get();
-
-    const list: TopupRequest[] = [];
-    snap.forEach(doc => list.push(doc.data() as TopupRequest));
-    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  },
-
-  /**
-   * Obtener todas las solicitudes pendientes para la consola del operador humano.
-   */
-  getPendingTopups: async (): Promise<TopupRequest[]> => {
-    if (!db) throw new Error('FIRESTORE_UNAVAILABLE: Base de datos no disponible.');
-    const snap = await db.collection('topup_requests')
-      .where('status', 'in', ['CREATED', 'RECEIPT_SUBMITTED', 'REVIEW', 'VERIFIED'])
-      .limit(50)
-      .get();
-
-    const list: TopupRequest[] = [];
-    snap.forEach(doc => list.push(doc.data() as TopupRequest));
-    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  },
-
-  /**
-   * 3. INGESTA DE COMPROBANTE VISUAL (EVIDENCIA AUXILIAR OPCIONAL)
-   * REGLA V1: No se invoca Gemini ni OCR. La captura sirve exclusivamente como evidencia
-   * complementaria para la inspección visual del operador humano.
-   */
-  submitReceiptAndAnalyze: async (
-    topupId: string,
-    driverId: string,
-    receiptBase64: string,
-    receiptUrl?: string
-  ): Promise<TopupRequest> => {
-    if (!db) throw new Error('FIRESTORE_UNAVAILABLE: Base de datos no disponible.');
-
-    const topupRef = db.collection('topup_requests').doc(topupId);
-    const snap = await topupRef.get();
-    if (!snap.exists) throw new Error('RECARGA_NO_ENCONTRADA: Recarga no encontrada en Firestore.');
-
-    const topup = snap.data() as TopupRequest;
-
-    if (topup.driverId !== driverId) {
-      throw new Error('ACCESO_DENEGADO: No tiene autorización sobre esta recarga.');
-    }
-
-    if (topup.status === 'CREDITED' || topup.status === 'REJECTED') {
-      throw new Error(`ESTADO_TERMINAL: La recarga se encuentra en estado terminal (${topup.status}).`);
-    }
-
-    if (topup.status === 'VERIFIED') {
-      throw new Error('ESTADO_INMUTABLE: Una solicitud VERIFIED ya fue conciliada y no puede recibir nuevos comprobantes.');
-    }
-
-    if (new Date(topup.expiresAt) < new Date()) {
-      throw new Error('SOLICITUD_EXPIRADA: Esta solicitud de recarga ha superado el tiempo límite.');
-    }
-
-    // Marcar como RECEIPT_SUBMITTED en Firestore
-    const nowIso = new Date().toISOString();
-    const submitAudit: TopupAuditEntry = {
-      fromStatus: topup.status,
-      toStatus: 'RECEIPT_SUBMITTED',
-      timestamp: nowIso,
-      actorId: driverId,
-      actorRole: 'driver',
-      reason: 'Comprobante visual adjuntado como evidencia auxiliar para revisión humana del operador.'
-    };
-
-    const cleanBase64 = receiptBase64.slice(0, 500000);
-    await topupRef.update({
-      receiptBase64: cleanBase64,
-      receiptUrl: receiptUrl || null,
-      status: 'RECEIPT_SUBMITTED',
-      updatedAt: nowIso,
-      auditHistory: FieldValue.arrayUnion(submitAudit)
-    });
-
-    const updatedSnap = await topupRef.get();
-    return updatedSnap.data() as TopupRequest;
-  },
-
-  /**
-   * 4 & 5. CONCILIACIÓN CON MOVIMIENTO REAL CONFIRMADO POR EL OPERADOR
-   * El operador humano ingresa los datos del dinero recibido en el Yape receptor.
-   */
-  reconcileTopup: async (
-    topupId: string,
-    bankMovement: BankMovementInput | null,
-    operatorId: string
-  ): Promise<TopupRequest> => {
-    if (!db) throw new Error('FIRESTORE_UNAVAILABLE: Base de datos no disponible.');
-
-    const topupRef = db.collection('topup_requests').doc(topupId);
-    const snap = await topupRef.get();
-    if (!snap.exists) throw new Error('RECARGA_NO_ENCONTRADA: Recarga no encontrada en Firestore.');
-
-    const topup = snap.data() as TopupRequest;
-
-    if (topup.status === 'CREDITED') {
-      throw new Error('IDEMPOTENCIA: Esta solicitud ya fue acreditada.');
-    }
-
-    if (topup.status === 'REJECTED') {
-      throw new Error('ESTADO_TERMINAL: Una solicitud REJECTED no puede volver a conciliarse.');
-    }
-
-    if (topup.status === 'VERIFIED') {
-      throw new Error('ESTADO_INMUTABLE: Una conciliación VERIFIED no puede ser reemplazada; debe pasar por acreditación o rechazo explícito.');
-    }
-
-    if (new Date(topup.expiresAt) < new Date()) {
-      throw new Error('SOLICITUD_EXPIRADA: La solicitud ha expirado.');
-    }
-
-    let movementDocId: string | null = null;
-    if (bankMovement) {
-      movementDocId = bankMovement.securityCode && bankMovement.operationNumber
-        ? `MOV-${bankMovement.operationNumber}-${bankMovement.securityCode}`
-        : `MOV-${bankMovement.date}-${bankMovement.time}-${bankMovement.amount}-${bankMovement.payerName.replace(/\s+/g, '_')}`;
-
-      // Reclamar el movimiento de forma atómica antes de modificarlo.
-      // Esto evita que dos recargas distintas puedan asociarse al mismo movimiento
-      // si llegan casi simultáneamente.
-      const movementRef = db.collection('bank_movements').doc(movementDocId);
-      await db.runTransaction(async (transaction) => {
-        const movementSnap = await transaction.get(movementRef);
-        if (movementSnap.exists) {
-          const existingTopupId = movementSnap.data()?.matchedTopupId;
-          if (existingTopupId && existingTopupId !== topupId) {
-            throw new Error(
-              `MOVIMIENTO_YA_ASIGNADO: El movimiento bancario ${movementDocId} ya está vinculado a la recarga ${existingTopupId}.`
-            );
-          }
-        }
-
-        transaction.set(movementRef, {
-          ...bankMovement,
-          id: movementDocId,
-          source: 'YAPE_PERSONAL_MANUAL',
-          operatorId,
-          matchedTopupId: topupId,
-          confirmedAt: new Date().toISOString(),
-          createdAtServer: FieldValue.serverTimestamp()
-        }, { merge: true });
-      });
-    }
-
-    // Evaluar con el motor de conciliación humana
-    const reconciliation = await ReconciliationService.evaluateReconciliation(topup, bankMovement, operatorId);
-
-    const nowIso = new Date().toISOString();
-    const reconciliationAudit: TopupAuditEntry = {
-      fromStatus: topup.status,
-      toStatus: reconciliation.status,
-      timestamp: nowIso,
-      actorId: operatorId,
-      actorRole: 'operator',
-      reason: `Conciliación del operador: estado resultante ${reconciliation.status}. ${reconciliation.notes || ''}`,
-      metadata: {
-        discrepancies: reconciliation.discrepancies,
-        verifiedAmount: reconciliation.verifiedAmount
-      }
-    };
-
-    await topupRef.update({
-      reconciliation,
-      verifiedAmount: reconciliation.verifiedAmount,
-      bankMovementId: movementDocId,
-      status: reconciliation.status,
-      updatedAt: nowIso,
-      auditHistory: FieldValue.arrayUnion(reconciliationAudit)
-    });
-
-    const updatedSnap = await topupRef.get();
-    return updatedSnap.data() as TopupRequest;
-  },
-
-  /**
-   * APROBACIÓN MANUAL DE CASOS EN 'REVIEW'
-   * Autorización formal por parte del operador humano tras verificar con el chofer o el banco.
-   */
-  approveReviewTopup: async (
-    topupId: string,
-    operatorId: string,
-    operatorNotes: string
-  ): Promise<TopupRequest> => {
-    if (!db) throw new Error('FIRESTORE_UNAVAILABLE: Base de datos no disponible.');
-
-    const topupRef = db.collection('topup_requests').doc(topupId);
-    const snap = await topupRef.get();
-    if (!snap.exists) throw new Error('RECARGA_NO_ENCONTRADA: Recarga no encontrada en Firestore.');
-
-    const topup = snap.data() as TopupRequest;
-
-    if (topup.status !== 'REVIEW') {
-      throw new Error(`ESTADO_INVALIDO: Solo se pueden aprobar solicitudes en estado REVIEW. Estado actual: ${topup.status}`);
-    }
-
-    // La aprobación manual no puede crear una conciliación desde cero.
-    // Debe existir una conciliación REVIEW trazable al movimiento confirmado.
-    if (
-      topup.reconciliation?.status !== 'REVIEW' ||
-      !topup.reconciliation.matchedMovementId ||
-      topup.bankMovementId !== topup.reconciliation.matchedMovementId
-    ) {
-      throw new Error('CONCILIACION_NO_VERIFICABLE: El caso REVIEW no tiene una conciliación trazable a un movimiento confirmado.');
-    }
-
-    const movementRef = db.collection('bank_movements').doc(topup.reconciliation.matchedMovementId);
-    const movementSnap = await movementRef.get();
-    if (!movementSnap.exists || movementSnap.data()?.matchedTopupId !== topupId) {
-      throw new Error('MOVIMIENTO_NO_VERIFICADO: No existe un movimiento bancario confirmado y vinculado a esta recarga.');
-    }
-
-    const nowIso = new Date().toISOString();
-    const approvedAudit: TopupAuditEntry = {
-      fromStatus: 'REVIEW',
-      toStatus: 'VERIFIED',
-      timestamp: nowIso,
-      actorId: operatorId,
-      actorRole: 'operator',
-      reason: `Aprobación manual autorizada tras revisión: ${operatorNotes}`,
-      metadata: { operatorNotes }
-    };
-
-    await topupRef.update({
-      status: 'VERIFIED',
-      updatedAt: nowIso,
-      'reconciliation.status': 'VERIFIED',
-      'reconciliation.notes': `Aprobado manualmente por operador ${operatorId}: ${operatorNotes}`,
-      auditHistory: FieldValue.arrayUnion(approvedAudit)
-    });
-
-    const updatedSnap = await topupRef.get();
-    return updatedSnap.data() as TopupRequest;
-  },
-
-  /**
-   * RECHAZO EXPLÍCITO POR EL OPERADOR
-   */
-  rejectTopup: async (
-    topupId: string,
-    operatorId: string,
-    reason: string
-  ): Promise<TopupRequest> => {
-    if (!db) throw new Error('FIRESTORE_UNAVAILABLE: Base de datos no disponible.');
-
-    const topupRef = db.collection('topup_requests').doc(topupId);
-    const snap = await topupRef.get();
-    if (!snap.exists) throw new Error('RECARGA_NO_ENCONTRADA: Recarga no encontrada en Firestore.');
-
-    const topup = snap.data() as TopupRequest;
-    if (topup.status === 'CREDITED') {
-      throw new Error('IDEMPOTENCIA: No se puede rechazar una recarga ya acreditada.');
-    }
-
-    const nowIso = new Date().toISOString();
-    const rejectAudit: TopupAuditEntry = {
-      fromStatus: topup.status,
-      toStatus: 'REJECTED',
-      timestamp: nowIso,
-      actorId: operatorId,
-      actorRole: 'operator',
-      reason: `Rechazado por operador: ${reason}`
-    };
-
-    await topupRef.update({
-      status: 'REJECTED',
-      updatedAt: nowIso,
-      'reconciliation.status': 'REJECTED',
-      'reconciliation.notes': reason,
-      auditHistory: FieldValue.arrayUnion(rejectAudit)
-    });
-
-    const updatedSnap = await topupRef.get();
-    return updatedSnap.data() as TopupRequest;
-  },
-
-  /**
-   * ACREDITACIÓN ATÓMICA FINAL
-   * Delega exclusivamente a WalletService.creditVerifiedTopup (Firestore runTransaction).
-   */
-  creditTopup: async (topupId: string, operatorId: string) => {
-    return await WalletService.creditVerifiedTopup(topupId, operatorId);
-  }
+const audit = async (adminId: string, action: string, targetId: string, details: Record<string, unknown>) => {
+  await getPool().execute(
+    'INSERT INTO audit_logs (actor_id, actor_role, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?, ?)',
+    [adminId, 'ADMIN', action, 'topup_request', targetId, JSON.stringify(details)]
+  ).catch((err) => console.error('[TOPUP] No se pudo auditar:', (err as Error).message));
 };
+
+export class TopupService {
+  /** El motorizado dice "ya yapeé tanto, con este número de operación". */
+  static async createRequest(driverId: string, amount: unknown, operationNumber: unknown): Promise<TopupView> {
+    const requested = Number(amount);
+    if (!Number.isFinite(requested) || requested < 5 || requested > 2000) {
+      throw new HttpError(400, 'El monto debe estar entre S/ 5 y S/ 2000.');
+    }
+    const op = typeof operationNumber === 'string' ? operationNumber.trim().slice(0, 30) : '';
+    if (!op) throw new HttpError(400, 'Escribe el número de operación de tu Yape.');
+
+    const pool = getPool();
+    const [pending] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM topup_requests WHERE driver_id = ? AND status = 'RECEIPT_SUBMITTED' LIMIT 1`, [driverId]
+    );
+    if (pending[0]) throw new HttpError(409, 'Ya tienes una recarga esperando revisión.');
+
+    const id = newId();
+    const expiresAt = new Date(Date.now() + 72 * 3600 * 1000);
+    await pool.execute(
+      `INSERT INTO topup_requests (id, reference_code, driver_id, requested_amount, operation_number, status, expires_at)
+       VALUES (?, ?, ?, ?, ?, 'RECEIPT_SUBMITTED', ?)`,
+      [id, newReference(), driverId, money(requested), op, expiresAt]
+    );
+    const [rows] = await pool.query<RowDataPacket[]>(`${SELECT} WHERE t.id = ?`, [id]);
+    return toView(rows[0]);
+  }
+
+  static async myHistory(driverId: string, limit = 20): Promise<TopupView[]> {
+    const [rows] = await getPool().query<RowDataPacket[]>(
+      `${SELECT} WHERE t.driver_id = ? ORDER BY t.created_at DESC LIMIT ?`, [driverId, limit]
+    );
+    return rows.map(toView);
+  }
+
+  /** Para el admin: lista de recargas, filtrable por estado. */
+  static async list(status?: TopupStatus): Promise<TopupView[]> {
+    const pool = getPool();
+    const [rows] = status
+      ? await pool.query<RowDataPacket[]>(`${SELECT} WHERE t.status = ? ORDER BY t.created_at ASC`, [status])
+      : await pool.query<RowDataPacket[]>(`${SELECT} ORDER BY FIELD(t.status,'RECEIPT_SUBMITTED','CREDITED','REJECTED'), t.created_at DESC`);
+    return rows.map(toView);
+  }
+
+  /** El admin confirma que vio el Yape entrar: acredita contra la deuda del motorizado. */
+  static async credit(topupId: string, adminId: string): Promise<TopupView> {
+    await withTransaction(async (conn) => {
+      const [rows] = await conn.query<RowDataPacket[]>('SELECT * FROM topup_requests WHERE id = ? FOR UPDATE', [topupId]);
+      const t = rows[0];
+      if (!t) throw new HttpError(404, 'Recarga no encontrada.');
+      if (t.status !== 'RECEIPT_SUBMITTED') throw new HttpError(400, 'Esta recarga ya fue revisada.');
+      await conn.execute(
+        `UPDATE topup_requests SET status = 'CREDITED', reviewed_by = ?, reviewed_at = NOW(3), credited_at = NOW(3) WHERE id = ?`,
+        [adminId, topupId]
+      );
+      await WalletService.applyTopupCredit(conn, String(t.driver_id), topupId, Number(t.requested_amount));
+    });
+    await audit(adminId, 'TOPUP_CREDITED', topupId, {});
+    const [rows] = await getPool().query<RowDataPacket[]>(`${SELECT} WHERE t.id = ?`, [topupId]);
+    return toView(rows[0]);
+  }
+
+  static async reject(topupId: string, adminId: string, reason: string): Promise<TopupView> {
+    const cleanReason = reason.trim().slice(0, 255);
+    if (!cleanReason) throw new HttpError(400, 'Escribe el motivo del rechazo.');
+    const pool = getPool();
+    const [res] = await pool.execute(
+      `UPDATE topup_requests SET status = 'REJECTED', rejection_reason = ?, reviewed_by = ?, reviewed_at = NOW(3)
+       WHERE id = ? AND status = 'RECEIPT_SUBMITTED'`,
+      [cleanReason, adminId, topupId]
+    );
+    if ((res as { affectedRows: number }).affectedRows === 0) throw new HttpError(400, 'Recarga no encontrada o ya revisada.');
+    await audit(adminId, 'TOPUP_REJECTED', topupId, { reason: cleanReason });
+    const [rows] = await pool.query<RowDataPacket[]>(`${SELECT} WHERE t.id = ?`, [topupId]);
+    return toView(rows[0]);
+  }
+}

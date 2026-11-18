@@ -1,34 +1,48 @@
-// ============================================================================
-// ZÉNITH
-// Module : Financial / Topup Routes (Pilot V1 - Yape Personal)
-// Layer  : Infrastructure / Routes
-// File   : topup.routes.ts
-// ============================================================================
-
-import { Router } from 'express';
-import { requireAuth } from '../middlewares/auth.middleware';
-import { topupController } from '../controllers/topup.controller';
-import rateLimit from 'express-rate-limit';
+import { Router, Request, Response } from 'express';
+import { requireSession, requireAppRole, SessionRequest } from '../middlewares/session.middleware';
+import { TopupService, TopupStatus } from '../services/topup.service';
+import { HttpError } from '../services/http-error';
 
 const router = Router();
+router.use(requireSession);
 
-const topupRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 30,
-  message: { success: false, message: 'Demasiadas solicitudes de recarga. Intente nuevamente en unos minutos.' }
-});
+const uid = (req: Request) => (req as SessionRequest).session?.sub || '';
 
-// Rutas del motorizado
-router.post('/request', requireAuth, topupRateLimiter, topupController.createRequest);
-router.post('/receipt', requireAuth, topupRateLimiter, topupController.submitReceipt);
-router.get('/status/:topupId', requireAuth, topupController.getStatus);
-router.get('/my-history', requireAuth, topupController.getMyHistory);
+const handle = (fn: (req: Request) => Promise<unknown>, okStatus = 200) => async (req: Request, res: Response) => {
+  try {
+    const data = await fn(req);
+    res.status(okStatus).json({ success: true, ...(data && typeof data === 'object' ? data : {}) });
+  } catch (err) {
+    if (err instanceof HttpError) return res.status(err.statusCode).json({ success: false, message: err.message });
+    console.error('[TOPUP] Error inesperado:', err);
+    res.status(500).json({ success: false, message: 'Error del servidor. Intenta de nuevo.' });
+  }
+};
 
-// Rutas del operador / conciliación
-router.get('/pending', requireAuth, topupController.getPending);
-router.post('/reconcile', requireAuth, topupController.reconcile);
-router.post('/approve-review', requireAuth, topupController.approveReview);
-router.post('/reject', requireAuth, topupController.reject);
-router.post('/credit', requireAuth, topupController.credit);
+const VALID_STATUS: TopupStatus[] = ['RECEIPT_SUBMITTED', 'REJECTED', 'CREDITED'];
+
+// --------------------------------------------------- Rutas del motorizado
+router.post('/', requireAppRole(['driver']), handle(async (req) => ({
+  topup: await TopupService.createRequest(uid(req), req.body?.amount, req.body?.operationNumber),
+}), 201));
+
+router.get('/mine', requireAppRole(['driver']), handle(async (req) => ({
+  topups: await TopupService.myHistory(uid(req)),
+})));
+
+// --------------------------------------------------------- Rutas del admin
+router.get('/', requireAppRole(['admin']), handle(async (req) => {
+  const status = typeof req.query.status === 'string' && VALID_STATUS.includes(req.query.status as TopupStatus)
+    ? (req.query.status as TopupStatus) : undefined;
+  return { topups: await TopupService.list(status) };
+}));
+
+router.post('/:id/credit', requireAppRole(['admin']), handle(async (req) => ({
+  topup: await TopupService.credit(req.params.id, uid(req)),
+})));
+
+router.post('/:id/reject', requireAppRole(['admin']), handle(async (req) => ({
+  topup: await TopupService.reject(req.params.id, uid(req), String(req.body?.reason || '')),
+})));
 
 export default router;

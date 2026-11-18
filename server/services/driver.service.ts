@@ -5,6 +5,7 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { getPool, withTransaction } from '../config/mysql';
 import { DispatchService } from './dispatch.service';
+import { WalletService } from './wallet.service';
 import { HttpError } from './http-error';
 import { notify, PendingNotice } from '../realtime/bus';
 
@@ -53,6 +54,9 @@ export class DriverService {
         if (p.is_blocked) throw new HttpError(403, 'Tu cuenta está bloqueada.');
         if (p.status !== 'APPROVED') throw new HttpError(403, 'Tus documentos aún no están aprobados.');
         if (Number(p.suspended)) throw new HttpError(403, 'Tu cuenta está suspendida temporalmente.');
+        if (await WalletService.isBlockedByDebt(conn, driverId)) {
+          throw new HttpError(403, 'Tienes una deuda de comisión pendiente. Recarga por Yape para seguir conectado.');
+        }
       }
 
       const [cur] = await conn.query<RowDataPacket[]>('SELECT status, current_ride_id FROM drivers_online WHERE driver_id = ? FOR UPDATE', [driverId]);

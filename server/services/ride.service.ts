@@ -13,6 +13,7 @@ import { verifyQuoteSignature, ServerQuoteResult } from './pricing.service';
 import { resolveCityFromCoordinates } from './geo.service';
 import { DispatchService } from './dispatch.service';
 import { getNumberSetting } from './settings.service';
+import { WalletService } from './wallet.service';
 import { HttpError } from './http-error';
 import { notify, PendingNotice } from '../realtime/bus';
 
@@ -364,6 +365,7 @@ export class RideService {
       await conn.execute(`UPDATE rides SET status = ?${extra[next] || ''} WHERE id = ?`, [next, rideId]);
       if (next === 'COMPLETED') {
         await conn.execute(`UPDATE drivers_online SET status = 'AVAILABLE', current_ride_id = NULL WHERE driver_id = ?`, [driverId]);
+        await WalletService.chargeRideCommission(conn, rideId, driverId, Number(ride.protected_price));
       }
       await event(conn, rideId, 'MOTORIZADO', driverId, `STATUS_${next}`);
       const [rows] = await conn.query<RowDataPacket[]>('SELECT * FROM rides WHERE id = ?', [rideId]);

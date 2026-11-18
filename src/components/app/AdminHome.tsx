@@ -3,11 +3,12 @@
  * Reemplaza el UPDATE a mano por phpMyAdmin. Solo lo ve users.is_admin = 1.
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { ShieldCheck, Check, X, Phone } from 'lucide-react';
+import { ShieldCheck, Check, X, Phone, Wallet } from 'lucide-react';
 import { AdminApi } from '../../api/endpoints';
 import { errorMessage } from '../../api/http';
 import type { ApiDriverApplication, DriverReviewStatus } from '../../api/types';
 import { Card, PrimaryButton, GhostButton, ErrorText, Row } from './ui';
+import AdminTopups from './AdminTopups';
 
 const TABS: { key: DriverReviewStatus; label: string }[] = [
   { key: 'PENDING', label: 'Pendientes' },
@@ -18,6 +19,7 @@ const TABS: { key: DriverReviewStatus; label: string }[] = [
 ];
 
 export default function AdminHome() {
+  const [section, setSection] = useState<'drivers' | 'topups'>('drivers');
   const [tab, setTab] = useState<DriverReviewStatus>('PENDING');
   const [drivers, setDrivers] = useState<ApiDriverApplication[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,9 +72,28 @@ export default function AdminHome() {
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-[#39FF14]">
         <ShieldCheck size={22} />
-        <h2 className="text-lg font-black uppercase italic">Panel admin — Motorizados</h2>
+        <h2 className="text-lg font-black uppercase italic">Panel admin</h2>
       </div>
 
+      <div className="grid grid-cols-2 gap-1 text-[10px] font-mono uppercase font-bold">
+        <button
+          type="button"
+          onClick={() => setSection('drivers')}
+          className={`py-2 rounded-lg border ${section === 'drivers' ? 'border-[#39FF14] text-[#39FF14] bg-[#39FF14]/10' : 'border-white/10 text-gray-400'}`}
+        >
+          Motorizados
+        </button>
+        <button
+          type="button"
+          onClick={() => setSection('topups')}
+          className={`py-2 rounded-lg border flex items-center justify-center gap-1.5 ${section === 'topups' ? 'border-[#39FF14] text-[#39FF14] bg-[#39FF14]/10' : 'border-white/10 text-gray-400'}`}
+        >
+          <Wallet size={12} />Recargas
+        </button>
+      </div>
+
+      {section === 'topups' ? <AdminTopups /> : (
+      <>
       <div className="grid grid-cols-5 gap-1 text-[9px] font-mono uppercase font-bold">
         {TABS.map((t) => (
           <button
@@ -158,6 +179,8 @@ export default function AdminHome() {
             </div>
           ))}
         </div>
+      )}
+      </>
       )}
     </div>
   );

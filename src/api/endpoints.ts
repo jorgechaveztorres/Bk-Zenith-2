@@ -6,6 +6,7 @@ import { api, saveSession, clearSession, getRefreshToken, updateSessionUser } fr
 import type {
   ApiSession, ApiUser, AppRole, ApiRide, ApiQuote, ApiOffer, DeliveryDetails, Place,
   ApiRestaurant, ApiMenuItem, ApiDriverApplication, DriverReviewStatus,
+  ApiWallet, ApiWalletMovement, ApiTopup, TopupStatus,
 } from './types';
 
 export const MIN_PASSWORD = 6;
@@ -147,6 +148,24 @@ export const AdminApi = {
 
   rejectDriver: async (driverId: string, reason: string) =>
     (await api<{ driver: ApiDriverApplication }>('POST', `/admin/drivers/${encodeURIComponent(driverId)}/reject`, { reason })).driver,
+
+  topups: async (status?: TopupStatus) =>
+    (await api<{ topups: ApiTopup[] }>('GET', `/topups${status ? `?status=${status}` : ''}`)).topups,
+
+  creditTopup: async (topupId: string) =>
+    (await api<{ topup: ApiTopup }>('POST', `/topups/${encodeURIComponent(topupId)}/credit`)).topup,
+
+  rejectTopup: async (topupId: string, reason: string) =>
+    (await api<{ topup: ApiTopup }>('POST', `/topups/${encodeURIComponent(topupId)}/reject`, { reason })).topup,
+};
+
+// ---------------------------------------------------------------- Billetera del motorizado
+export const WalletApi = {
+  me: async () => (await api<{ wallet: ApiWallet }>('GET', '/wallet/me')).wallet,
+  movements: async () => (await api<{ movements: ApiWalletMovement[] }>('GET', '/wallet/movements')).movements,
+  requestTopup: async (amount: number, operationNumber: string) =>
+    (await api<{ topup: ApiTopup }>('POST', '/topups', { amount, operationNumber })).topup,
+  myTopups: async () => (await api<{ topups: ApiTopup[] }>('GET', '/topups/mine')).topups,
 };
 
 // ---------------------------------------------------------------- Motorizado

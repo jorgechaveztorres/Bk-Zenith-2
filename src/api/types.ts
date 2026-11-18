@@ -173,6 +173,44 @@ export interface ApiOffer {
   paymentMethod: string;
 }
 
+export interface ApiWallet {
+  driverId: string;
+  cashDebt: number;
+  accumulatedCommission: number;
+  debtLimit: number;
+  blocked: boolean;
+  freeUntil: string | null;
+  isInFreePeriod: boolean;
+}
+
+export interface ApiWalletMovement {
+  id: string;
+  type: string;
+  amount: number;
+  balanceAfter: number;
+  description: string | null;
+  rideId: string | null;
+  topupId: string | null;
+  createdAt: string;
+}
+
+export type TopupStatus = 'RECEIPT_SUBMITTED' | 'REJECTED' | 'CREDITED';
+
+export interface ApiTopup {
+  id: string;
+  driverId: string;
+  driverName: string | null;
+  driverPhone: string | null;
+  requestedAmount: number;
+  operationNumber: string | null;
+  status: TopupStatus;
+  rejectionReason: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  creditedAt: string | null;
+  createdAt: string;
+}
+
 export type RealtimeEvent =
   | { type: 'offer'; rideId: string; assignmentId: string }
   | { type: 'offer.closed'; assignmentId: string; reason: string }
