@@ -9,13 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.2.0-food-marketplace] - 2026-11-17
 ### Added
-- Marketplace de comida (FOOD-001), backend completo: restaurantes publican su menú **sin costo**; Zénith solo gana con la comisión de envío ya existente (10%, ADR-004).
+- Marketplace de comida (FOOD-001), **completo end-to-end** (backend + app): restaurantes publican su menú **sin costo**; Zénith solo gana con la comisión de envío ya existente (10%, ADR-004).
 - Migración `003_restaurantes.sql`: tablas `restaurants` y `menu_items`; columna `rides.restaurant_id`.
 - `restaurant.service.ts` y `/api/restaurants/*`: alta de restaurante y menú (solo el dueño), listado público de restaurantes abiertos y su menú, abrir/cerrar, y creación de pedido de comida con los precios de los platos congelados y validados por el servidor (nunca por el cliente).
 - El pedido de comida reutiliza el motor de precio firmado, despacho, OTP y realtime ya existente para encomiendas (origen = restaurante, destino = cliente, `order_type = 'FOOD'`), sin duplicar lógica.
-- Prueba `test:food` (15 casos) contra MariaDB real.
+- App: `RestaurantHome.tsx` (publicar/gestionar menú/abrir-cerrar, accesible por el ícono de tienda en el header) y `FoodOrder.tsx` (navegar restaurantes, carrito, dirección de entrega, pago) con una pestaña "Pedir comida" en `PassengerHome`.
+- `src/api`: `FoodApi` y tipos `ApiRestaurant`/`ApiMenuItem`/`FoodOrderDetails`.
+- Prueba `test:food` (15 casos) contra MariaDB real, más una verificación visual de punta a punta en el navegador (Playwright) del flujo completo dueño → menú → cliente → pedido.
 ### Changed
 - `ride.service.ts`: `order_type` ahora es dinámico (`DELIVERY` | `FOOD`) en vez de fijo; `package_info` guarda el detalle de encomienda o de comida según corresponda.
+- `http.ts`: el cliente ahora admite `PATCH` además de `GET`/`POST`.
 
 ---
 

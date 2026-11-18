@@ -24,14 +24,15 @@ Fase 6: Despliegue y Prod              ░░░░░░░░░░░░░�
 
 ## HITOS Y DESGLOSE DE FASES
 
-### 🟡 Fase 7: Marketplace de Comida (Backend listo — 60%)
+### 🟢 Fase 7: Marketplace de Comida (Completo — 100%)
 *Restaurantes publican su menú gratis en Zénith — sin la comisión alta de Rappi/PedidosYa.*
 - [x] Decidido con el dueño: el restaurante no paga nada. Zénith solo gana con la comisión de envío (10%, ADR-004).
 - [x] Esquema: tablas `restaurants` y `menu_items` (migración 003); el pedido de comida reutiliza `rides` (`order_type='FOOD'`, `restaurant_id`).
 - [x] API: alta de restaurante y menú por el dueño, listado público de abiertos/menú, y pedido con precios congelados y validados por el servidor (`/api/restaurants/*`).
 - [x] Flujo de pedido de comida reutilizando el motor de precio firmado + despacho + OTP + realtime ya existente (origin=restaurante, destination=cliente). 15 pruebas en verde (`npm run test:food`).
-- [ ] Pantalla en la app para que el restaurante gestione su menú (alta/edición/abrir-cerrar).
-- [ ] Pantalla en la app para que el cliente navegue restaurantes, arme su pedido y lo siga (puede reusar `PassengerHome`/`AddressPicker`).
+- [x] Pantalla `RestaurantHome.tsx`: cualquier cuenta publica su restaurante gratis, sube/oculta platos, abre/cierra (ícono de tienda en el header).
+- [x] Pantalla `FoodOrder.tsx` + pestaña "Pedir comida" en `PassengerHome`: el cliente navega restaurantes abiertos, arma su carrito, elige a dónde lo llevan y ve comida + envío por separado antes de pedir.
+- [x] Verificado de punta a punta con un flujo real en el navegador (dueño publica → sube menú → cliente pide → pedido buscando motorizado con el desglose correcto).
 
 
 ### 🟢 Fase 1: Core Operativo (Completado)
