@@ -450,6 +450,39 @@ export class RideService {
     return outcome.ride;
   }
 
+  /**
+   * El cliente califica al motorizado (1 a 5 estrellas) tras un pedido entregado.
+   * Una sola vez por pedido; recalcula el promedio del motorizado al vuelo.
+   */
+  static async rateRide(rideId: string, passengerId: string, rating: unknown, feedback?: unknown): Promise<RideView> {
+    const stars = Number(rating);
+    if (!Number.isInteger(stars) || stars < 1 || stars > 5) {
+      throw new HttpError(400, 'La calificación debe ser un número entero de 1 a 5.');
+    }
+    const view = await withTransaction(async (conn) => {
+      const ride = await lockRide(conn, rideId);
+      if (ride.passenger_id !== passengerId) throw new HttpError(403, 'Solo el cliente puede calificar este pedido.');
+      if (ride.status !== 'COMPLETED') throw new HttpError(400, 'Solo se puede calificar un pedido ya entregado.');
+      if (ride.rating !== null) throw new HttpError(409, 'Ya calificaste este pedido.');
+      if (!ride.driver_id) throw new HttpError(400, 'Este pedido no tiene motorizado asociado.');
+
+      await conn.execute('UPDATE rides SET rating = ?, feedback = ? WHERE id = ?', [stars, cleanText(feedback, 500) ?? null, rideId]);
+
+      const [avg] = await conn.query<RowDataPacket[]>(
+        'SELECT ROUND(AVG(rating), 2) AS avg_rating FROM rides WHERE driver_id = ? AND rating IS NOT NULL', [ride.driver_id]
+      );
+      const newAverage = Number(avg[0]?.avg_rating ?? stars);
+      await conn.execute('UPDATE driver_profiles SET rating = ? WHERE user_id = ?', [newAverage, ride.driver_id]);
+      await conn.execute('UPDATE users SET rating = ? WHERE id = ?', [newAverage, ride.driver_id]);
+
+      await event(conn, rideId, 'SOLICITANTE', passengerId, 'RIDE_RATED');
+      const [rows] = await conn.query<RowDataPacket[]>('SELECT * FROM rides WHERE id = ?', [rideId]);
+      return toRideView(rows[0]);
+    });
+    notify(rideNotices(view));
+    return view;
+  }
+
   /** Cancelar: el cliente o el motorizado asignado, antes de que termine. */
   static async cancelRide(rideId: string, userId: string, reason?: string): Promise<RideView> {
     const offerClosed: PendingNotice[] = [];

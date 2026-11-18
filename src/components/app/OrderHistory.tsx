@@ -3,11 +3,63 @@
  * Sirve igual para el cliente (sus pedidos) que para el motorizado (sus viajes).
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { History, Package, UtensilsCrossed, X, Clock } from 'lucide-react';
+import { History, Package, UtensilsCrossed, X, Clock, Star } from 'lucide-react';
 import { RidesApi } from '../../api/endpoints';
 import { errorMessage } from '../../api/http';
 import type { ApiRide } from '../../api/types';
-import { Card, ErrorText, GhostButton, PAYMENT_LABEL, soles } from './ui';
+import { Card, ErrorText, GhostButton, PrimaryButton, PAYMENT_LABEL, soles } from './ui';
+
+/** El cliente elige estrellas (1 a 5) y, si quiere, un comentario, y envía la calificación. */
+function RateRide({ rideId, onRated }: { rideId: string; onRated: (ride: ApiRide) => void }) {
+  const [stars, setStars] = useState(0);
+  const [hover, setHover] = useState(0);
+  const [feedback, setFeedback] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = () => {
+    if (stars < 1) {
+      setError('Elige de 1 a 5 estrellas.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    RidesApi.rate(rideId, stars, feedback.trim() || undefined)
+      .then(onRated)
+      .catch((err) => setError(errorMessage(err)))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div className="pt-1 space-y-2">
+      <p className="text-xs text-gray-400">¿Cómo te fue con el motorizado?</p>
+      <div className="flex items-center gap-1">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button
+            key={n}
+            type="button"
+            onClick={() => setStars(n)}
+            onMouseEnter={() => setHover(n)}
+            onMouseLeave={() => setHover(0)}
+            aria-label={`${n} estrella${n === 1 ? '' : 's'}`}
+            className="p-0.5"
+          >
+            <Star size={22} className={(hover || stars) >= n ? 'text-[#39FF14] fill-[#39FF14]' : 'text-gray-600'} />
+          </button>
+        ))}
+      </div>
+      <input
+        className="w-full bg-white/5 border border-white/10 focus:border-[#39FF14] rounded-xl px-3 py-2 text-xs outline-none"
+        placeholder="Comentario (opcional)"
+        value={feedback}
+        onChange={(e) => setFeedback(e.target.value)}
+        maxLength={500}
+      />
+      <ErrorText text={error} />
+      <PrimaryButton busy={busy} onClick={submit} className="!py-2.5 !text-xs">Enviar calificación</PrimaryButton>
+    </div>
+  );
+}
 
 const STATUS_BADGE: Record<string, { text: string; className: string }> = {
   COMPLETED: { text: 'Entregado', className: 'text-[#39FF14] border-[#39FF14]/40' },
@@ -140,6 +192,12 @@ export default function OrderHistory({ isDriver }: { isDriver: boolean }) {
                           <span>Calificación</span>
                           <span>{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
                         </p>
+                      )}
+                      {!isDriver && r.status === 'COMPLETED' && r.rating === null && (
+                        <RateRide
+                          rideId={r.id}
+                          onRated={(updated) => setItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)))}
+                        />
                       )}
                     </div>
                   )}

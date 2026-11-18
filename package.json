@@ -27,7 +27,8 @@
     "test:admin": "tsx scripts/test-admin-mysql.ts",
     "test:wallet": "tsx scripts/test-wallet-mysql.ts",
     "test:driver-documents": "tsx scripts/test-driver-documents-mysql.ts",
-    "test:order-history": "tsx scripts/test-order-history-mysql.ts"
+    "test:order-history": "tsx scripts/test-order-history-mysql.ts",
+    "test:rating": "tsx scripts/test-rating-mysql.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

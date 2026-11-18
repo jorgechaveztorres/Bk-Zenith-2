@@ -32,6 +32,7 @@ export interface DriverApplicationView {
   hasLicensePhoto: boolean;
   hasVehiclePhoto: boolean;
   documentsSubmittedAt: string | null;
+  rating: number;
 }
 
 const toIso = (v: unknown): string | null => (v instanceof Date ? v.toISOString() : v ? String(v) : null);
@@ -59,10 +60,11 @@ const toView = (r: RowDataPacket): DriverApplicationView => ({
   hasLicensePhoto: Boolean(r.license_photo_path),
   hasVehiclePhoto: Boolean(r.vehicle_photo_path),
   documentsSubmittedAt: toIso(r.documents_submitted_at),
+  rating: Number(r.rating ?? 5),
 });
 
 const SELECT = `
-  SELECT p.user_id, p.status, p.rejection_reason, p.reviewed_by, p.reviewed_at, p.created_at,
+  SELECT p.user_id, p.status, p.rejection_reason, p.reviewed_by, p.reviewed_at, p.created_at, p.rating,
          p.vehicle_category, p.vehicle_plate, p.vehicle_brand, p.vehicle_model, p.vehicle_year, p.vehicle_color,
          p.license_number, p.license_expiry, p.license_photo_path, p.vehicle_photo_path, p.documents_submitted_at,
          u.full_name, u.phone, u.is_blocked

@@ -86,6 +86,9 @@ export const RidesApi = {
   get: async (rideId: string) => (await api<{ ride: ApiRide }>('GET', `/rides/${encodeURIComponent(rideId)}`)).ride,
   cancel: async (rideId: string, reason?: string) =>
     (await api<{ ride: ApiRide }>('POST', `/rides/${encodeURIComponent(rideId)}/cancel`, { reason })).ride,
+  /** El cliente califica al motorizado (1 a 5) tras un pedido entregado. */
+  rate: async (rideId: string, rating: number, feedback?: string) =>
+    (await api<{ ride: ApiRide }>('POST', `/rides/${encodeURIComponent(rideId)}/rate`, { rating, feedback })).ride,
 };
 
 // ---------------------------------------------------------------- Marketplace de comida

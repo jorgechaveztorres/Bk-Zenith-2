@@ -108,6 +108,7 @@ export interface ApiDriverApplication {
   hasLicensePhoto: boolean;
   hasVehiclePhoto: boolean;
   documentsSubmittedAt: string | null;
+  rating: number;
 }
 
 export interface ApiDriverProfile {

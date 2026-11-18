@@ -73,4 +73,8 @@ router.post('/:rideId/cancel', handle(async (req) => ({
   ride: await RideService.cancelRide(req.params.rideId, uid(req), req.body?.reason),
 })));
 
+router.post('/:rideId/rate', requireAppRole(['passenger', 'driver']), handle(async (req) => ({
+  ride: await RideService.rateRide(req.params.rideId, uid(req), req.body?.rating, req.body?.feedback),
+})));
+
 export default router;

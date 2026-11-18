@@ -3,7 +3,7 @@
  * Reemplaza el UPDATE a mano por phpMyAdmin. Solo lo ve users.is_admin = 1.
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { ShieldCheck, Check, X, Phone, Wallet, ImageOff } from 'lucide-react';
+import { ShieldCheck, Check, X, Phone, Wallet, ImageOff, Star } from 'lucide-react';
 import { AdminApi, DriverDocumentsApi } from '../../api/endpoints';
 import { errorMessage, fetchProtectedImageUrl } from '../../api/http';
 import type { ApiDriverApplication, DriverReviewStatus } from '../../api/types';
@@ -168,6 +168,14 @@ export default function AdminHome() {
                   </div>
                   {d.isBlocked && <span className="text-[10px] font-mono uppercase text-red-400 border border-red-400/40 rounded-lg px-2 py-1 shrink-0">Bloqueado</span>}
                 </div>
+
+                {d.status === 'APPROVED' && (
+                  <Row label="Calificación" value={
+                    <span className="inline-flex items-center gap-1">
+                      <Star size={13} className="text-[#39FF14] fill-[#39FF14]" /> {d.rating.toFixed(2)}
+                    </span>
+                  } />
+                )}
 
                 {(d.vehicle.plate || d.vehicle.brand || d.vehicle.model) && (
                   <Row
