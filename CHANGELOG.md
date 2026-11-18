@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.0-web-push] - 2026-11-18
+### Added
+- Push notifications con Web Push/VAPID (reemplaza Firebase Cloud Messaging, completa la mitad del ítem 5): migración 007 (`push_subscriptions`), `push.service.ts`, rutas `/api/push/*`, `public/sw.js`, `src/push.ts` (se activa/desactiva solo con el login/logout).
+- Se enchufa al bus `realtime/bus.ts` existente: push automático en "oferta nueva" y "pedido cambió de estado", sin tocar `ride.service.ts`.
+- Sin claves VAPID en el entorno, el envío simplemente no hace nada (no rompe nada).
+- Prueba `test:push` (11 casos). Suite completa 196/196 en verde.
+### Pending
+- GPS en segundo plano real no se hizo: no hay garantía en navegador puro con pantalla apagada; queda para el APK nativo (ítem 8).
+
+---
+
 ## [2.8.0-ride-rating] - 2026-11-18
 ### Added
 - Calificación de viajes (completa el ítem 4 de la lista de prioridades): `POST /api/rides/:rideId/rate`, solo el cliente, solo tras `COMPLETED`, solo una vez (1 a 5 estrellas, comentario opcional hasta 500 caracteres).

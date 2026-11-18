@@ -104,7 +104,7 @@ Fase 6: Despliegue y Prod              ░░░░░░░░░░░░░�
 2. [x] SMS real (Twilio integrado; `SMS_PROVIDER=console` sigue siendo el modo de prueba).
 3. [x] Historial de pedidos.
 4. [x] Calificación de viajes.
-5. [ ] Push notifications + GPS en segundo plano.
+5. [x] Push notifications (Web Push/VAPID) — [ ] GPS en segundo plano real (queda para el APK nativo).
 6. [ ] Recarga Yape con OCR/IA del comprobante (hoy es 100% manual: el motorizado escribe el número de operación).
 7. [ ] Limpieza técnica: pantallas/servicios Firebase muertos, ramas sin fusionar, borrar `zenith-wstest` en cPanel.
 8. [ ] APK firmado para Play Store.

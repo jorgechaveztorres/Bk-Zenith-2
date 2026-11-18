@@ -1,5 +1,21 @@
 # Registro de Sesión
 
+**Fecha:** 18 de Noviembre de 2026 (parte 5)
+**Agente:** Claude (Sonnet 5)
+**Fase:** MySQL/cPanel — Push notifications (Web Push)
+
+## Objetivo Completado
+- Paquete 5 (mitad): push con Web Push/VAPID, reemplazando Firebase Cloud Messaging. Migración 007 (`push_subscriptions`), `push.service.ts` enchufado al bus `realtime/bus.ts` (push en "oferta nueva" y "pedido cambió"), rutas `/api/push/*`, `public/sw.js`, `src/push.ts` (activa/desactiva con login/logout, mejor esfuerzo).
+- `.env.example` con `VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY/VAPID_SUBJECT` (generadas con `npx web-push generate-vapid-keys`).
+- Prueba `test:push` (11 casos). Suite completa 196/196 OK. Commit `331f578`, push a `zenith/mysql-login`.
+- GPS en segundo plano NO se hizo: no hay garantía real en navegador con pantalla apagada; queda para el APK nativo (paquete 8).
+
+## Pendiente / Siguiente
+- Paquete 6: recarga Yape con OCR/IA del comprobante.
+- Nota: el usuario activó "Modo Ahorro de Tokens" — respuestas cortas, solo el diff, plan antes de código, agrupar preguntas.
+
+---
+
 **Fecha:** 18 de Noviembre de 2026 (parte 4)
 **Agente:** Claude (Sonnet 5)
 **Fase:** MySQL/cPanel — Calificación de viajes

@@ -3,16 +3,16 @@
   "repository_version": "2.1.0-app-mysql",
   "architecture_version": "3.0.0-mysql-cpanel-sin-firebase",
   "current_phase": "Migración a MySQL en cPanel (sin Firebase): servidor listo y app núcleo (login, cliente, motorizado) ya sobre la API",
-  "current_sprint": "Calificación de viajes completada. El usuario fijó el orden del resto: push+GPS en segundo plano, recarga con OCR, limpieza técnica, APK firmado, backups/secretos, y Google Routes al final.",
+  "current_sprint": "Push notifications (Web Push/VAPID) completado, reemplazando Firebase. GPS en segundo plano queda pendiente para el APK nativo (paquete 8). Sigue: recarga Yape con OCR, limpieza técnica, APK firmado, backups/secretos, Google Routes al final.",
   "current_agent": "CLAUDE_OPUS_5_5",
   "active_branch": "zenith/mysql-login (deploy: rama deploy-cpanel)",
-  "last_commit": "feat(rides): calificación de viajes (1 a 5 estrellas)",
-  "repository_status": "Build Green — tsc 0 errores, build OK; pruebas auth 23, rides 38, realtime 13, app 27, food 15, admin 11, wallet 20, driver-documents 12, order-history 13, rating 13 (185 en total) contra MariaDB local",
-  "next_work_package": "Calificación de viajes completada (paquete 4): POST /api/rides/:rideId/rate (server/services/ride.service.ts → RideService.rateRide, server/routes/ride.routes.ts). Solo el cliente (passenger_id del pedido) puede calificar, solo cuando el pedido está COMPLETED, solo una vez (rechaza con 409 si rides.rating ya no es null), rating entero 1-5, feedback opcional (máx. 500 caracteres). Al calificar, recalcula AVG(rides.rating) de todos los pedidos de ese motorizado y actualiza driver_profiles.rating y users.rating (ambas columnas ya existían en el esquema, antes sin usar). admin.service.ts ahora expone rating en DriverApplicationView/ApiDriverApplication. App: OrderHistory.tsx muestra un selector de estrellas tappable (componente RateRide) en pedidos COMPLETED sin calificar, solo para el cliente (no para el motorizado); AdminHome.tsx muestra el promedio junto a los datos del motorizado aprobado. Prueba test:rating (13 casos: no calificar antes de COMPLETED, rango 1-5, una sola vez, no calificar pedido ajeno, el motorizado no puede autocalificarse, recálculo correcto del promedio con 2 pedidos de distintos clientes, requiere sesión). ORDEN DE PRIORIDADES decidido por el usuario (2026-11-17, Google Routes al final): 1) documentos del motorizado [HECHO], 2) SMS real [HECHO], 3) historial de pedidos [HECHO], 4) calificación de viajes [HECHO], 5) push notifications + GPS en segundo plano, 6) recarga Yape con OCR/IA del comprobante (hoy 100% manual), 7) limpieza técnica (pantallas/servicios Firebase muertos, ramas sin fusionar, borrar zenith-wstest en cPanel), 8) APK firmado para Play Store, 9) backups de BD + revisar secretos de producción en cPanel, 10) Google Routes (al final). Siguiente paso: empezar el ítem 5, push notifications + GPS en segundo plano (probablemente Firebase Cloud Messaging o Web Push + un service worker, y para GPS en segundo plano en Android revisar permisos de ubicación en background del APK).",
+  "last_commit": "feat(push): notificaciones Web Push (reemplaza Firebase Cloud Messaging)",
+  "repository_status": "Build Green — tsc 0 errores, build OK; 196 pruebas en total (auth 23, rides 38, realtime 13, app 27, food 15, admin 11, wallet 20, driver-documents 12, order-history 13, rating 13, push 11) contra MariaDB local",
+  "next_work_package": "Push notifications completado (paquete 5, mitad): Web Push estándar (VAPID) con npm web-push, NO Firebase. Migración 007 crea push_subscriptions (endpoint único por usuario, ON DELETE CASCADE). server/services/push.service.ts expone subscribe/unsubscribe/sendToUser y se enchufa solo al bus realtime/bus.ts (onRealtime) para mandar push en eventos \"offer\" y \"ride\" (cambios de estado) ademas del WebSocket, sin tocar ride.service.ts. Rutas /api/push/vapid-public-key (publica), /subscribe, /unsubscribe en server/routes/push.routes.ts. Si no hay VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY en el entorno, el envio no hace nada (no rompe nada). App: public/sw.js (Service Worker) + src/push.ts, se activa/desactiva solo al iniciar/cerrar sesion desde App.tsx, mejor esfuerzo. .env.example documenta las 3 variables VAPID (se generan una sola vez con npx web-push generate-vapid-keys; ya hay un par de prueba en el .env local). GPS en segundo plano NO se hizo: en navegador puro no hay garantia real con pantalla apagada; queda para cuando exista el APK nativo (paquete 8, permisos de ubicacion en background de Android). Prueba test:push (11 casos). ORDEN DE PRIORIDADES (17-nov-2026, Google Routes al final): 1) documentos del motorizado [HECHO], 2) SMS real [HECHO], 3) historial de pedidos [HECHO], 4) calificacion de viajes [HECHO], 5) push notifications [HECHO] + GPS en segundo plano [PENDIENTE, va con el APK], 6) recarga Yape con OCR/IA del comprobante, 7) limpieza tecnica, 8) APK firmado, 9) backups/secretos, 10) Google Routes. Siguiente paso: paquete 6, recarga Yape con OCR/IA del comprobante (hoy 100% manual via AdminTopups.tsx).",
   "next_agent": "Claude",
   "blocked": false,
   "blockers": [],
-  "updated_at": "2026-11-18T01:15:00-05:00",
+  "updated_at": "2026-11-18T07:55:00-05:00",
   "server": {
     "url": "https://shocos.nom.pe/zenith-api",
     "db": "MariaDB shocos_zenith",
@@ -47,12 +47,13 @@
       "billetera: deuda de comisión + recarga Yape manual (WalletHome.tsx, AdminTopups.tsx)",
       "documentos del motorizado: vehículo/licencia + fotos (MyDocuments.tsx), con miniaturas en el panel admin",
       "historial de pedidos: delivery y comida, cliente y motorizado, paginado (OrderHistory.tsx)",
-      "calificación de viajes: el cliente califica 1-5 al motorizado tras entregar, promedio visible en el panel admin"
+      "calificación de viajes: el cliente califica 1-5 al motorizado tras entregar, promedio visible en el panel admin",
+      "push notifications Web Push (VAPID): sw.js + push.service.ts, reemplaza Firebase Cloud Messaging"
     ],
     "mapa": "OpenStreetMap + Leaflet (gratis); antes del lanzamiento con mucho tráfico cambiar tiles/buscador a proveedor pagado o propio",
     "firebase_en_bundle": false,
     "pendiente": [
-      "push notifications + GPS en segundo plano",
+      "GPS en segundo plano real (requiere APK nativo, no es posible 100% en navegador)",
       "pantallas viejas sin usar (PassengerFlow, DriverFlow, admin, LSO, heart test) — borrar o migrar"
     ]
   }
