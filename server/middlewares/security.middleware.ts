@@ -21,8 +21,12 @@ export const configureSecurity = (app: Express) => {
 
   // 2. CORS
   // Restrict to known origins in production
+  // FRONTEND_URL admite varias direcciones separadas por coma. La app Android (Capacitor)
+  // llama desde https://localhost, así que ese origen se acepta siempre.
+  const allowed = (process.env.FRONTEND_URL || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const origins = allowed.length ? [...allowed, 'https://localhost', 'capacitor://localhost', 'http://localhost'] : '*';
   app.use(cors({
-    origin: process.env.NODE_ENV === 'production' ? process.env.FRONTEND_URL || '*' : '*',
+    origin: process.env.NODE_ENV === 'production' ? origins : '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   }));

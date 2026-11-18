@@ -1,18 +1,18 @@
 {
   "project_name": "ZÉNITH — Ecosistema de Transporte Inteligente",
-  "repository_version": "2.0.0-mysql-cpanel",
+  "repository_version": "2.1.0-app-mysql",
   "architecture_version": "3.0.0-mysql-cpanel-sin-firebase",
-  "current_phase": "Migración a MySQL en cPanel (sin Firebase): servidor listo, faltan pantallas de la app",
-  "current_sprint": "MYSQL-001",
-  "current_agent": "CLAUDE_SONNET_5_5",
+  "current_phase": "Migración a MySQL en cPanel (sin Firebase): servidor listo y app núcleo (login, cliente, motorizado) ya sobre la API",
+  "current_sprint": "APP-001",
+  "current_agent": "CLAUDE_OPUS_5_5",
   "active_branch": "zenith/mysql-login (deploy: rama deploy-cpanel)",
-  "last_commit": "eb3b19e feat(tiempo-real): avisos al instante por WebSocket",
-  "repository_status": "Build Green — lint 0 errores, build OK; servidor real en shocos.nom.pe/zenith-api probado de punta a punta",
-  "next_work_package": "APP-001 — Migrar las pantallas de la app (~40 partes atadas a Firebase) a la API MySQL; revisar mapas/autocompletado para no gastar Google; luego documentos de motorizado + panel admin, billetera/Yape con comisión 10%",
+  "last_commit": "feat(app): APP-001 núcleo de la app sobre la API MySQL",
+  "repository_status": "Build Green — tsc 0 errores, build OK; pruebas auth 23, rides 38, realtime 13, app 27, pricing 23, geo 42 contra MariaDB local",
+  "next_work_package": "APP-002 — Documentos del motorizado (subida a cPanel, sin Firebase Storage) + panel admin para aprobar/rechazar; luego billetera/Yape con comisión 10% leyendo platform_commission_rate. Antes: desplegar servidor (rutas /api/geo y CORS nuevos) y compilar APK apuntando a https://shocos.nom.pe/zenith-api",
   "next_agent": "Claude (usar Fable/Opus para pagos y seguridad)",
   "blocked": false,
   "blockers": [],
-  "updated_at": "2026-11-17T21:20:00-05:00",
+  "updated_at": "2026-11-17T22:45:00-05:00",
   "server": {
     "url": "https://shocos.nom.pe/zenith-api",
     "db": "MariaDB shocos_zenith",
@@ -20,7 +20,8 @@
       "login celular+clave",
       "pedidos/despacho",
       "tiempo real WebSocket",
-      "rutas gratis (estimación)"
+      "rutas gratis (estimación)",
+      "buscador de direcciones gratis OSM/Nominatim (/api/geo, caché + 1 consulta/seg)"
     ],
     "google_routes": "desactivado a propósito; reactivar solo antes del lanzamiento con tope de cuota y alerta de presupuesto"
   },
@@ -31,6 +32,25 @@
   "pending_cleanup": [
     "borrar app zenith-wstest en cPanel",
     "código viejo aún usa 13% fijo: leer platform_commission_rate de app_settings al migrar billetera",
-    "rescatar partes útiles de 3 ramas sin fusionar (seguridad financiera)"
-  ]
+    "rescatar partes útiles de 3 ramas sin fusionar (seguridad financiera)",
+    "borrar componentes/servicios viejos atados a Firebase cuando APP-002/003 los reemplacen"
+  ],
+  "app": {
+    "done": [
+      "cliente API con sesión y renovación automática (src/api)",
+      "WebSocket con reconexión y consulta de respaldo",
+      "login celular+clave, registro y recuperar clave por SMS",
+      "cliente: mapa OpenStreetMap, buscar/tocar/GPS, precio, pedir, seguir en vivo, código, cancelar",
+      "motorizado: conectarse con GPS, oferta 15 s, aceptar/rechazar, en camino, llegué, código, entregado, navegación con Google Maps/Waze por enlace"
+    ],
+    "mapa": "OpenStreetMap + Leaflet (gratis); antes del lanzamiento con mucho tráfico cambiar tiles/buscador a proveedor pagado o propio",
+    "firebase_en_bundle": false,
+    "pendiente": [
+      "documentos motorizado + admin",
+      "billetera/Yape",
+      "calificación",
+      "historial de pedidos",
+      "pantallas viejas sin usar (PassengerFlow, DriverFlow, admin, LSO, heart test) — borrar o migrar"
+    ]
+  }
 }

@@ -83,3 +83,28 @@ Ver `next_work_package` en PROJECT_STATE.json. Limpieza: app `zenith-wstest`, 13
 
 ## Entorno
 Despliegue: push a GitHub → rama `deploy-cpanel` → copiar `dist/server.cjs` y `package.json` a `/home/shocos/zenith-deploy` → NPM Install y reiniciar en Node.js Selector. Único log persistente: `stderr.log`. phpMyAdmin pide confirmación manual en cada DELETE.
+
+---
+
+# Sesión 2026-11-17 (noche) — APP-001: la app sobre la API MySQL (Claude Opus 5.5)
+
+## Objetivo
+Que la app deje de depender de Firebase en su flujo principal: entrar, pedir y repartir contra `shocos.nom.pe/zenith-api`.
+
+## Hecho
+- `src/api/`: cliente HTTP con sesión guardada y renovación automática (una sola a la vez), WebSocket con reconexión y consulta de respaldo, GPS (Capacitor), tipos espejo del servidor.
+- `PhoneAuth`: entrar con celular + clave; registro y recuperar clave con SMS.
+- `PassengerHome`: mapa OpenStreetMap, buscar/tocar/GPS, precio firmado, pedir, seguimiento en vivo (estado + ubicación), código de recojo, cancelar.
+- `DriverHome`: conectarse con GPS (latido cada 15 s, 5 s con pedido), oferta 15 s, aceptar/rechazar, en camino → llegué → código → entregado, enlaces a Google Maps/Waze.
+- Servidor: buscador de direcciones gratis (`/api/geo`, Nominatim con caché 24 h y cola de 1 consulta/seg); CORS acepta el origen del APK.
+- `App.tsx` reescrito sin Firebase. Decisión del dueño: mapa OpenStreetMap (gratis) hasta el lanzamiento.
+
+## Verificado
+- `tsc` 0 errores, `npm run build` OK, Firebase fuera del paquete de la app.
+- MariaDB local: auth 23, rides 38, realtime 13, app 27 (nuevo), pricing 23, geo 42.
+- Recorrido completo en Chrome con dos teléfonos simulados (cliente y motorizado): registro → pedido → oferta → aceptar → código → entregado.
+
+## Pendiente
+- Desplegar servidor en cPanel (rutas `/api/geo`, CORS) y compilar el APK.
+- APP-002: documentos del motorizado + panel admin. Luego billetera/Yape (comisión 10 % desde `app_settings`).
+- Las pantallas viejas (PassengerFlow, DriverFlow, admin, LSO, prueba corazón) siguen en el repo sin usarse.

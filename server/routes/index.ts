@@ -9,6 +9,7 @@ import topupRoutes from './topup.routes';
 import notificationRoutes from './notification.routes';
 import pricingRoutes from './pricing.routes';
 import authRoutes from './auth.routes';
+import geoRoutes from './geo.routes';
 
 const router = Router();
 
@@ -22,5 +23,6 @@ router.use('/audit', auditRoutes);
 router.use('/ledger', ledgerRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/pricing', pricingRoutes);
+router.use('/geo', geoRoutes);
 
 export default router;

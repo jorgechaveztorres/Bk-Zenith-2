@@ -8,6 +8,8 @@ interface ImportMetaEnv {
   readonly VITE_STORAGE_EMULATOR_HOST?: string;
   readonly VITE_STORAGE_EMULATOR_PORT?: string;
   readonly VITE_OTHER_KEY?: string;
+  /** Dirección de la API Zénith, ej. https://shocos.nom.pe/zenith-api (sin / final). */
+  readonly VITE_API_BASE?: string;
 }
 
 interface ImportMeta {

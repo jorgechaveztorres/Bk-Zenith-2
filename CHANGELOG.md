@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.0-app-mysql] - 2026-11-17
+### Added
+- App sobre la API MySQL (APP-001): `src/api/` (sesión con renovación automática, WebSocket con reconexión, GPS).
+- Pantalla de entrada con celular + clave; registro y recuperar clave con SMS.
+- Cliente: mapa OpenStreetMap (Leaflet), buscar dirección / tocar el mapa / GPS, precio firmado, pedir, seguimiento en vivo, código de recojo, cancelar.
+- Motorizado: conectarse con GPS, oferta con cuenta regresiva, aceptar/rechazar, estados, validar código, entregado, navegación por enlace a Google Maps/Waze.
+- Servidor: `/api/geo/search` y `/api/geo/reverse` (Nominatim con caché y 1 consulta/seg).
+- Prueba `test:app` (27) del cliente de la app contra servidor + MariaDB.
+### Changed
+- `App.tsx` ya no usa Firebase (el paquete de la app no incluye Firebase).
+- CORS acepta siempre el origen del APK (`https://localhost`) aunque `FRONTEND_URL` esté definido; `FRONTEND_URL` admite varias direcciones separadas por coma.
+
 ## [2.0.0-mysql-cpanel] - 2026-11-17
 ### Added
 - Servidor en MySQL/MariaDB (cPanel) sin Firebase: login celular + clave, pedidos y despacho, código de recojo, avisos en tiempo real por WebSocket.

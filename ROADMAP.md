@@ -5,9 +5,9 @@ Este documento define la trayectoria técnica del proyecto **ZÉNITH**, dividida
 ---
 
 ## Estado Actual
-- **Fase Activa:** Migración a MySQL en cPanel (servidor 100 %, pantallas de la app 0 %)
-- **Sprint Activo:** MYSQL-001 (servidor completado) → APP-001 (pantallas, siguiente)
-- **Progreso Global Estimado:** **~55%** (servidor listo; faltan pantallas de la app, documentos/admin, billetera, APK)
+- **Fase Activa:** Migración a MySQL en cPanel (servidor 100 %, app núcleo 100 %, documentos/admin/billetera 0 %)
+- **Sprint Activo:** APP-001 (completado: login, cliente, motorizado) → APP-002 (documentos + admin, siguiente)
+- **Progreso Global Estimado:** **~65%** (servidor y app núcleo listos; faltan documentos/admin, billetera, APK)
 
 ---
 
