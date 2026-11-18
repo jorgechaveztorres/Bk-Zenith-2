@@ -36,6 +36,12 @@ router.post('/request', requireAppRole(['passenger', 'driver']), handle(async (r
 
 router.get('/active', handle(async (req) => ({ ride: await RideService.getActiveRide(uid(req)) })));
 
+router.get('/history', handle(async (req) => RideService.getHistory(
+  uid(req),
+  Number(req.query.page) || 1,
+  Number(req.query.pageSize) || 20,
+)));
+
 // ---------------------------------------------------------------- Motorizado
 router.post('/driver/presence', requireAppRole(['driver']), handle((req) => DriverService.updatePresence(uid(req), {
   lat: req.body?.lat, lng: req.body?.lng, online: req.body?.online, heading: req.body?.heading, speedKmh: req.body?.speedKmh,

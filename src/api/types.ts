@@ -162,8 +162,20 @@ export interface ApiRide {
   acceptedAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  rating: number | null;
+  feedback: string | null;
+  cancelledBy: string | null;
+  cancelReason: string | null;
   /** Solo para el cliente, mientras el código de recojo sirve. */
   otpCode?: string;
+}
+
+export interface ApiRideHistoryPage {
+  items: ApiRide[];
+  page: number;
+  pageSize: number;
+  total: number;
+  hasMore: boolean;
 }
 
 export interface ApiQuote {

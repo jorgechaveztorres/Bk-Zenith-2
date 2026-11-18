@@ -105,7 +105,15 @@ export interface RideView {
   acceptedAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  rating: number | null;
+  feedback: string | null;
+  cancelledBy: string | null;
+  cancelReason: string | null;
 }
+
+/** Estados finales: ya no cambian, son los que se listan en el historial. */
+const TERMINAL_STATUSES: RideStatus[] = ['COMPLETED', 'CANCELLED', 'EXPIRED'];
+const HISTORY_PAGE_SIZE_MAX = 50;
 
 const toNum = (v: unknown): number => Number(v);
 const toIso = (v: unknown): string | null => (v instanceof Date ? v.toISOString() : v ? String(v) : null);
@@ -142,6 +150,10 @@ export const toRideView = (r: RowDataPacket): RideView => {
     acceptedAt: toIso(r.accepted_at),
     startedAt: toIso(r.started_at),
     completedAt: toIso(r.completed_at),
+    rating: r.rating !== null && r.rating !== undefined ? toNum(r.rating) : null,
+    feedback: r.feedback ?? null,
+    cancelledBy: r.cancelled_by ?? null,
+    cancelReason: r.cancel_reason ?? null,
   };
 };
 
@@ -283,6 +295,38 @@ export class RideService {
       [userId, userId]
     );
     return rows[0] ? toRideView(rows[0]) : null;
+  }
+
+  /**
+   * Historial de pedidos terminados (entregado, cancelado o vencido) del cliente o del
+   * motorizado. Paginado por fecha descendente, igual sirve para delivery que para comida.
+   */
+  static async getHistory(
+    userId: string, page = 1, pageSize = 20
+  ): Promise<{ items: RideView[]; page: number; pageSize: number; total: number; hasMore: boolean }> {
+    const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
+    const safeSize = Number.isFinite(pageSize) && pageSize > 0 ? Math.min(Math.floor(pageSize), HISTORY_PAGE_SIZE_MAX) : 20;
+    const offset = (safePage - 1) * safeSize;
+    const statusPlaceholders = TERMINAL_STATUSES.map(() => '?').join(',');
+
+    const [countRows] = await getPool().query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM rides WHERE (passenger_id = ? OR driver_id = ?) AND status IN (${statusPlaceholders})`,
+      [userId, userId, ...TERMINAL_STATUSES]
+    );
+    const total = Number(countRows[0]?.n || 0);
+
+    const [rows] = await getPool().query<RowDataPacket[]>(
+      `SELECT * FROM rides WHERE (passenger_id = ? OR driver_id = ?) AND status IN (${statusPlaceholders})
+       ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [userId, userId, ...TERMINAL_STATUSES, safeSize, offset]
+    );
+    return {
+      items: rows.map(toRideView),
+      page: safePage,
+      pageSize: safeSize,
+      total,
+      hasMore: offset + rows.length < total,
+    };
   }
 
   /** El motorizado acepta la oferta que se le hizo. */

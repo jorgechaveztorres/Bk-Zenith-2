@@ -6,7 +6,7 @@ import { api, apiUpload, saveSession, clearSession, getRefreshToken, updateSessi
 import type {
   ApiSession, ApiUser, AppRole, ApiRide, ApiQuote, ApiOffer, DeliveryDetails, Place,
   ApiRestaurant, ApiMenuItem, ApiDriverApplication, DriverReviewStatus,
-  ApiWallet, ApiWalletMovement, ApiTopup, TopupStatus, ApiDriverProfile,
+  ApiWallet, ApiWalletMovement, ApiTopup, TopupStatus, ApiDriverProfile, ApiRideHistoryPage,
 } from './types';
 
 export const MIN_PASSWORD = 6;
@@ -80,6 +80,9 @@ export const RidesApi = {
     return { ...r.ride, otpCode: r.otpCode };
   },
   active: async () => (await api<{ ride: ApiRide | null }>('GET', '/rides/active')).ride,
+  /** Historial de pedidos terminados (entregados, cancelados o vencidos), paginado. */
+  history: (page = 1, pageSize = 20) =>
+    api<ApiRideHistoryPage>('GET', `/rides/history?page=${page}&pageSize=${pageSize}`),
   get: async (rideId: string) => (await api<{ ride: ApiRide }>('GET', `/rides/${encodeURIComponent(rideId)}`)).ride,
   cancel: async (rideId: string, reason?: string) =>
     (await api<{ ride: ApiRide }>('POST', `/rides/${encodeURIComponent(rideId)}/cancel`, { reason })).ride,

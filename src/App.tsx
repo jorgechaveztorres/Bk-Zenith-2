@@ -3,7 +3,7 @@
  * Sesión propia (celular + clave) -> pantalla de cliente o de motorizado según el rol.
  */
 import React, { useEffect, useState } from 'react';
-import { LogOut, Car, User as UserIcon, Store, ShieldCheck, Wallet, FileText } from 'lucide-react';
+import { LogOut, Car, User as UserIcon, Store, ShieldCheck, Wallet, FileText, History } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AuthApi } from './api/endpoints';
 import { ApiError, getSessionUser, hasSession, onSessionChange } from './api/http';
@@ -16,8 +16,9 @@ import RestaurantHome from './components/app/RestaurantHome';
 import AdminHome from './components/app/AdminHome';
 import WalletHome from './components/app/WalletHome';
 import MyDocuments from './components/app/MyDocuments';
+import OrderHistory from './components/app/OrderHistory';
 
-type View = 'home' | 'restaurant' | 'admin' | 'wallet' | 'documents';
+type View = 'home' | 'restaurant' | 'admin' | 'wallet' | 'documents' | 'history';
 
 export default function App() {
   const [user, setUser] = useState<ApiUser | null>(getSessionUser());
@@ -89,6 +90,14 @@ export default function App() {
                 <p className="text-sm font-bold truncate max-w-[140px]">{user.fullName}</p>
               </div>
               <button
+                onClick={() => setView((v) => (v === 'history' ? 'home' : 'history'))}
+                className={`p-2.5 rounded-xl border ${view === 'history' ? 'bg-[#39FF14]/10 border-[#39FF14] text-[#39FF14]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
+                aria-label="Historial de pedidos"
+                title="Historial de pedidos"
+              >
+                <History size={16} />
+              </button>
+              <button
                 onClick={() => setView((v) => (v === 'restaurant' ? 'home' : 'restaurant'))}
                 className={`p-2.5 rounded-xl border ${view === 'restaurant' ? 'bg-[#39FF14]/10 border-[#39FF14] text-[#39FF14]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
                 aria-label="Mi restaurante"
@@ -150,6 +159,8 @@ export default function App() {
           >
             {!user ? (
               <PhoneAuth onSignedIn={setUser} />
+            ) : view === 'history' ? (
+              <OrderHistory isDriver={isDriver} />
             ) : view === 'restaurant' ? (
               <RestaurantHome />
             ) : view === 'admin' && user.isAdmin ? (
