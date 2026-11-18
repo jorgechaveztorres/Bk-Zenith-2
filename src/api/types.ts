@@ -105,6 +105,29 @@ export interface ApiDriverApplication {
   reviewedBy: string | null;
   reviewedAt: string | null;
   createdAt: string;
+  hasLicensePhoto: boolean;
+  hasVehiclePhoto: boolean;
+  documentsSubmittedAt: string | null;
+}
+
+export interface ApiDriverProfile {
+  userId: string;
+  status: DriverReviewStatus;
+  vehicle: {
+    category: string | null;
+    plate: string | null;
+    brand: string | null;
+    model: string | null;
+    year: number | null;
+    color: string | null;
+  };
+  licenseNumber: string | null;
+  licenseExpiry: string | null;
+  yapePlinPhone: string | null;
+  hasLicensePhoto: boolean;
+  hasVehiclePhoto: boolean;
+  documentsSubmittedAt: string | null;
+  rejectionReason: string | null;
 }
 
 export interface ApiMenuItem {

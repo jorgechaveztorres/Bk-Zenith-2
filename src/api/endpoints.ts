@@ -2,11 +2,11 @@
  * ZÉNITH — Llamadas a la API, agrupadas por tema.
  * Rutas del servidor: server/routes/auth.routes.ts, ride.routes.ts, pricing.routes.ts.
  */
-import { api, saveSession, clearSession, getRefreshToken, updateSessionUser } from './http';
+import { api, apiUpload, saveSession, clearSession, getRefreshToken, updateSessionUser } from './http';
 import type {
   ApiSession, ApiUser, AppRole, ApiRide, ApiQuote, ApiOffer, DeliveryDetails, Place,
   ApiRestaurant, ApiMenuItem, ApiDriverApplication, DriverReviewStatus,
-  ApiWallet, ApiWalletMovement, ApiTopup, TopupStatus,
+  ApiWallet, ApiWalletMovement, ApiTopup, TopupStatus, ApiDriverProfile,
 } from './types';
 
 export const MIN_PASSWORD = 6;
@@ -157,6 +157,39 @@ export const AdminApi = {
 
   rejectTopup: async (topupId: string, reason: string) =>
     (await api<{ topup: ApiTopup }>('POST', `/topups/${encodeURIComponent(topupId)}/reject`, { reason })).topup,
+};
+
+// ---------------------------------------------------------------- Documentos del motorizado
+export interface DriverDocumentsInput {
+  vehicleCategory?: string;
+  vehiclePlate: string;
+  vehicleBrand?: string;
+  vehicleModel?: string;
+  vehicleYear?: string;
+  vehicleColor?: string;
+  licenseNumber: string;
+  licenseExpiry?: string;
+  yapePlinPhone?: string;
+  licensePhoto?: File | null;
+  vehiclePhoto?: File | null;
+}
+
+export const DriverDocumentsApi = {
+  myProfile: async () => (await api<{ profile: ApiDriverProfile }>('GET', '/driver/profile')).profile,
+
+  submit: async (input: DriverDocumentsInput) => {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(input)) {
+      if (k === 'licensePhoto' || k === 'vehiclePhoto') continue;
+      if (v !== undefined && v !== null) form.set(k, String(v));
+    }
+    if (input.licensePhoto) form.set('licensePhoto', input.licensePhoto);
+    if (input.vehiclePhoto) form.set('vehiclePhoto', input.vehiclePhoto);
+    return (await apiUpload<{ profile: ApiDriverProfile }>('/driver/profile', form)).profile;
+  },
+
+  documentPath: (driverId: string, kind: 'license' | 'vehicle') =>
+    `/driver/documents/${encodeURIComponent(driverId)}/${kind}`,
 };
 
 // ---------------------------------------------------------------- Billetera del motorizado

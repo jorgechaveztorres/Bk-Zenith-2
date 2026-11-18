@@ -3,7 +3,7 @@
  * Sesión propia (celular + clave) -> pantalla de cliente o de motorizado según el rol.
  */
 import React, { useEffect, useState } from 'react';
-import { LogOut, Car, User as UserIcon, Store, ShieldCheck, Wallet } from 'lucide-react';
+import { LogOut, Car, User as UserIcon, Store, ShieldCheck, Wallet, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AuthApi } from './api/endpoints';
 import { ApiError, getSessionUser, hasSession, onSessionChange } from './api/http';
@@ -15,8 +15,9 @@ import DriverHome from './components/app/DriverHome';
 import RestaurantHome from './components/app/RestaurantHome';
 import AdminHome from './components/app/AdminHome';
 import WalletHome from './components/app/WalletHome';
+import MyDocuments from './components/app/MyDocuments';
 
-type View = 'home' | 'restaurant' | 'admin' | 'wallet';
+type View = 'home' | 'restaurant' | 'admin' | 'wallet' | 'documents';
 
 export default function App() {
   const [user, setUser] = useState<ApiUser | null>(getSessionUser());
@@ -97,6 +98,16 @@ export default function App() {
               </button>
               {isDriver && (
                 <button
+                  onClick={() => setView((v) => (v === 'documents' ? 'home' : 'documents'))}
+                  className={`p-2.5 rounded-xl border ${view === 'documents' ? 'bg-[#39FF14]/10 border-[#39FF14] text-[#39FF14]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
+                  aria-label="Mis documentos"
+                  title="Mis documentos"
+                >
+                  <FileText size={16} />
+                </button>
+              )}
+              {isDriver && (
+                <button
                   onClick={() => setView((v) => (v === 'wallet' ? 'home' : 'wallet'))}
                   className={`p-2.5 rounded-xl border ${view === 'wallet' ? 'bg-[#39FF14]/10 border-[#39FF14] text-[#39FF14]' : 'bg-white/5 border-white/10 hover:border-white/20'}`}
                   aria-label="Mi billetera"
@@ -145,6 +156,8 @@ export default function App() {
               <AdminHome />
             ) : view === 'wallet' && isDriver ? (
               <WalletHome />
+            ) : view === 'documents' && isDriver ? (
+              <MyDocuments />
             ) : isDriver ? (
               <DriverHome user={user} />
             ) : (

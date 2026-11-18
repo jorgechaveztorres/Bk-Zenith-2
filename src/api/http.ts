@@ -197,5 +197,33 @@ export const api = async <T>(method: 'GET' | 'POST' | 'PATCH', path: string, bod
   }
 };
 
+/** Para subir archivos (multipart/form-data): no pasa por JSON.stringify. */
+export const apiUpload = async <T>(path: string, form: FormData): Promise<T> => {
+  const token = await getAccessToken();
+  if (!token) throw new ApiError(401, 'Debes iniciar sesión.');
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api${path}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form });
+  } catch {
+    throw new ApiError(0, 'Sin conexión. Revisa tu internet e intenta de nuevo.');
+  }
+  let data: (T & ServerBody) | null = null;
+  try { data = (await res.json()) as T & ServerBody; } catch { data = null; }
+  if (!res.ok || !data || data.success === false) {
+    throw new ApiError(res.status, data?.message || `Error del servidor (${res.status}).`);
+  }
+  return data as T;
+};
+
+/** Trae una foto protegida (licencia/vehículo) como blob URL para un <img src>. Llamar URL.revokeObjectURL luego. */
+export const fetchProtectedImageUrl = async (path: string): Promise<string> => {
+  const token = await getAccessToken();
+  if (!token) throw new ApiError(401, 'Debes iniciar sesión.');
+  const res = await fetch(`${API_BASE}/api${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new ApiError(res.status, 'No se pudo cargar la foto.');
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+};
+
 export const errorMessage = (err: unknown): string =>
   err instanceof Error ? err.message : 'Ocurrió un error. Intenta de nuevo.';

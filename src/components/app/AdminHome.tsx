@@ -3,12 +3,51 @@
  * Reemplaza el UPDATE a mano por phpMyAdmin. Solo lo ve users.is_admin = 1.
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { ShieldCheck, Check, X, Phone, Wallet } from 'lucide-react';
-import { AdminApi } from '../../api/endpoints';
-import { errorMessage } from '../../api/http';
+import { ShieldCheck, Check, X, Phone, Wallet, ImageOff } from 'lucide-react';
+import { AdminApi, DriverDocumentsApi } from '../../api/endpoints';
+import { errorMessage, fetchProtectedImageUrl } from '../../api/http';
 import type { ApiDriverApplication, DriverReviewStatus } from '../../api/types';
 import { Card, PrimaryButton, GhostButton, ErrorText, Row } from './ui';
 import AdminTopups from './AdminTopups';
+
+/** Miniaturas de licencia/vehículo: solo pide las fotos si realmente existen. */
+function DriverPhotoThumbs({ driverId, hasLicense, hasVehicle }: { driverId: string; hasLicense: boolean; hasVehicle: boolean }) {
+  const [urls, setUrls] = useState<{ license?: string; vehicle?: string }>({});
+
+  useEffect(() => {
+    let license: string | undefined;
+    let vehicle: string | undefined;
+    (async () => {
+      if (hasLicense) license = await fetchProtectedImageUrl(DriverDocumentsApi.documentPath(driverId, 'license')).catch(() => undefined);
+      if (hasVehicle) vehicle = await fetchProtectedImageUrl(DriverDocumentsApi.documentPath(driverId, 'vehicle')).catch(() => undefined);
+      setUrls({ license, vehicle });
+    })();
+    return () => {
+      if (license) URL.revokeObjectURL(license);
+      if (vehicle) URL.revokeObjectURL(vehicle);
+    };
+  }, [driverId, hasLicense, hasVehicle]);
+
+  if (!hasLicense && !hasVehicle) {
+    return <p className="text-xs text-gray-500 flex items-center gap-1.5"><ImageOff size={13} />Todavía no sube sus fotos.</p>;
+  }
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {hasLicense && (
+        <div>
+          <p className="text-[10px] text-gray-500 font-mono uppercase mb-1">Licencia</p>
+          {urls.license ? <img src={urls.license} alt="Licencia" className="w-full h-24 object-cover rounded-lg border border-white/10" /> : <div className="w-full h-24 rounded-lg border border-white/10 animate-pulse bg-white/5" />}
+        </div>
+      )}
+      {hasVehicle && (
+        <div>
+          <p className="text-[10px] text-gray-500 font-mono uppercase mb-1">Vehículo</p>
+          {urls.vehicle ? <img src={urls.vehicle} alt="Vehículo" className="w-full h-24 object-cover rounded-lg border border-white/10" /> : <div className="w-full h-24 rounded-lg border border-white/10 animate-pulse bg-white/5" />}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const TABS: { key: DriverReviewStatus; label: string }[] = [
   { key: 'PENDING', label: 'Pendientes' },
@@ -142,6 +181,9 @@ export default function AdminHome() {
                   <p className="text-xs text-gray-500">Sin datos de vehículo/licencia registrados todavía.</p>
                 )}
                 <Row label="Solicitó" value={new Date(d.createdAt).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })} />
+                {(d.status === 'PENDING' || d.status === 'UNDER_REVIEW') && (
+                  <DriverPhotoThumbs driverId={d.userId} hasLicense={d.hasLicensePhoto} hasVehicle={d.hasVehiclePhoto} />
+                )}
                 {d.status === 'REJECTED' && d.rejectionReason && (
                   <p className="text-xs text-red-400 font-mono">Motivo del rechazo: {d.rejectionReason}</p>
                 )}
