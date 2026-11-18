@@ -1,5 +1,23 @@
 # Registro de Sesión
 
+**Fecha:** 18 de Noviembre de 2026 (parte 3)
+**Agente:** Claude (Sonnet 5)
+**Fase:** MySQL/cPanel — Historial de pedidos
+
+## Objetivo Completado
+- Historial de pedidos (paquete 3 del orden fijado por el usuario): `GET /api/rides/history`, paginado y del más reciente al más antiguo, con los pedidos ya terminados (entregado/cancelado/sin motorizado) del cliente o del motorizado. Reutiliza la tabla `rides` existente (ya tenía `order_type`, `rating`, `feedback`, `cancelled_by`, `cancel_reason`), así que no hizo falta migración.
+- `RideService.getHistory()` en `server/services/ride.service.ts`: filtra por `passenger_id` o `driver_id` igual al usuario de la sesión, `pageSize` con tope de 50. Ruta en `server/routes/ride.routes.ts`, antes de `/:rideId` para que no choque con el parámetro.
+- `RideView`/`ApiRide` ahora exponen `rating`/`feedback`/`cancelledBy`/`cancelReason` (ya estaban en la tabla, solo faltaba mapearlos) — quedan listos para el siguiente paquete (calificación).
+- App: `src/components/app/OrderHistory.tsx`, ícono propio ('History') en el header visible para cliente y motorizado (sin restricción de rol, a diferencia de billetera/documentos que son solo del motorizado), tarjetas expandibles con el detalle de cada pedido (ítems si es comida, direcciones si es delivery, pago, contraparte, motivo de cancelación, estrellas si ya tiene calificación) y botón "Ver más" para paginar.
+- Prueba `test:order-history` (13 aserciones): historial vacío al empezar, un pedido en curso no aparece hasta que termina, el cliente y el motorizado lo ven cada uno desde su lado, un motorizado no ve pedidos ajenos, orden descendente por fecha, paginación con `hasMore` correcto sin repetir pedidos, `pageSize` se recorta a un máximo, y el endpoint exige sesión. `npm run lint` y `npm run build` limpios. Suite completa: 172/172 OK (159 anteriores + 13 nuevas).
+- Commit `5ab984f`, push a `zenith/mysql-login`.
+
+## Pendiente / Siguiente
+- Seguir con el paquete 4 del orden fijado: **calificación de viajes**. Las columnas `rides.rating`/`rides.feedback` ya existen y ya están expuestas en `RideView`; falta el endpoint para que el cliente califique (probablemente `POST /api/rides/:rideId/rate`, solo tras `COMPLETED` y solo una vez) y mostrarlo en el perfil del motorizado / panel admin.
+- No se hizo verificación visual con Playwright de la pantalla nueva (sí 13 pruebas de backend contra la API real).
+
+---
+
 **Fecha:** 18 de Noviembre de 2026 (parte 2)
 **Agente:** Claude (Sonnet 5)
 **Fase:** MySQL/cPanel — SMS real con Twilio

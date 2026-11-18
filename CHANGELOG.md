@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.7.0-order-history] - 2026-11-18
+### Added
+- Historial de pedidos (completa el ítem 3 de la lista de prioridades): `GET /api/rides/history`, paginado y del más reciente al más antiguo, con los pedidos ya terminados (`COMPLETED`/`CANCELLED`/`EXPIRED`) del cliente o del motorizado — reutiliza la tabla `rides` existente, sin migración nueva.
+- `RideService.getHistory()` filtra por `passenger_id` o `driver_id` igual al usuario; `pageSize` tiene un tope de 50.
+- `RideView`/`ApiRide` ahora incluyen `rating`, `feedback`, `cancelledBy`, `cancelReason` (las columnas ya existían en `rides`, solo faltaba exponerlas).
+- App: `OrderHistory.tsx`, con ícono propio en el header (visible para cliente y motorizado, sin restricción de rol), tarjetas expandibles por pedido y "Ver más" para paginar.
+- Prueba `test:order-history` (13 casos): historial vacío, pedido activo no sale hasta terminar, ambos lados lo ven, no ve pedidos ajenos, orden descendente, paginación, tope de `pageSize`, requiere sesión. Suite completa 172/172 en verde.
+
+---
+
 ## [2.6.0-sms-twilio] - 2026-11-18
 ### Added
 - SMS real con Twilio (completa el ítem 2 de la lista de prioridades): `server/services/sms.service.ts` agrega una clase `TwilioSms` que implementa `SmsSender`, usando el paquete `twilio` (`^6.3.0`).
