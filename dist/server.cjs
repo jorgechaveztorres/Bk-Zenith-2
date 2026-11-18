@@ -22,11 +22,11 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // server.ts
-var import_express13 = __toESM(require("express"), 1);
+var import_express14 = __toESM(require("express"), 1);
 var import_path2 = __toESM(require("path"), 1);
 
 // server/app.ts
-var import_express12 = __toESM(require("express"), 1);
+var import_express13 = __toESM(require("express"), 1);
 
 // server/middlewares/security.middleware.ts
 var import_helmet = __toESM(require("helmet"), 1);
@@ -41,8 +41,10 @@ var configureSecurity = (app) => {
     crossOriginOpenerPolicy: false,
     crossOriginResourcePolicy: false
   }));
+  const allowed = (process.env.FRONTEND_URL || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const origins = allowed.length ? [...allowed, "https://localhost", "capacitor://localhost", "http://localhost"] : "*";
   app.use((0, import_cors.default)({
-    origin: process.env.NODE_ENV === "production" ? process.env.FRONTEND_URL || "*" : "*",
+    origin: process.env.NODE_ENV === "production" ? origins : "*",
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"]
   }));
@@ -66,7 +68,7 @@ var configureSecurity = (app) => {
 };
 
 // server/routes/index.ts
-var import_express11 = require("express");
+var import_express12 = require("express");
 
 // server/routes/payment.routes.ts
 var import_express = require("express");
@@ -3171,28 +3173,135 @@ router10.get("/me", requireSession, handle2(async (req) => {
 }));
 var auth_routes_default = router10;
 
-// server/routes/index.ts
+// server/routes/geo.routes.ts
+var import_express11 = require("express");
+var import_express_rate_limit5 = __toESM(require("express-rate-limit"), 1);
+
+// server/services/geocode.service.ts
+var BASE = process.env.NOMINATIM_URL || "https://nominatim.openstreetmap.org";
+var USER_AGENT = process.env.NOMINATIM_USER_AGENT || "ZenithDelivery/1.0 (shocos.nom.pe)";
+var CACHE_TTL_MS = 24 * 60 * 60 * 1e3;
+var CACHE_MAX = 2e3;
+var MIN_GAP_MS = 1100;
+var TRUJILLO_VIEWBOX = "-79.20,-7.95,-78.85,-8.25";
+var cache2 = /* @__PURE__ */ new Map();
+var chain = Promise.resolve();
+var lastCall = 0;
+var wait = (ms) => new Promise((r) => setTimeout(r, ms));
+var throttled = (fn) => {
+  const run = chain.then(async () => {
+    const gap = Date.now() - lastCall;
+    if (gap < MIN_GAP_MS) await wait(MIN_GAP_MS - gap);
+    lastCall = Date.now();
+    return fn();
+  });
+  chain = run.catch(() => void 0);
+  return run;
+};
+var cached = async (key, fn) => {
+  const hit = cache2.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
+  const value = await throttled(fn);
+  if (cache2.size >= CACHE_MAX) {
+    const oldest = cache2.keys().next().value;
+    if (oldest !== void 0) cache2.delete(oldest);
+  }
+  cache2.set(key, { at: Date.now(), value });
+  return value;
+};
+var shortAddress = (it) => {
+  const a = it.address || {};
+  const street = a.road || a.pedestrian;
+  const parts = [
+    it.name && it.name !== street ? it.name : void 0,
+    street ? `${street}${a.house_number ? ` ${a.house_number}` : ""}` : void 0,
+    a.neighbourhood || a.suburb || a.quarter,
+    a.city || a.town || a.village
+  ].filter((p) => !!p);
+  const text = parts.length >= 2 ? parts.join(", ") : it.display_name;
+  return text.slice(0, 255);
+};
+var call = async (path3, params) => {
+  const url = `${BASE}${path3}?${new URLSearchParams({ format: "jsonv2", addressdetails: "1", "accept-language": "es", ...params })}`;
+  let res;
+  try {
+    res = await fetch(url, { headers: { "User-Agent": USER_AGENT, Accept: "application/json" }, signal: AbortSignal.timeout(8e3) });
+  } catch {
+    throw new HttpError(502, "El buscador de direcciones no responde. Intenta de nuevo.");
+  }
+  if (!res.ok) throw new HttpError(502, "El buscador de direcciones no responde. Intenta de nuevo.");
+  return res.json();
+};
+var toResult = (it) => ({ address: shortAddress(it), lat: Number(it.lat), lng: Number(it.lon) });
+var searchAddress = async (rawQuery) => {
+  const q = typeof rawQuery === "string" ? rawQuery.trim().replace(/\s+/g, " ").slice(0, 120) : "";
+  if (q.length < 3) throw new HttpError(400, "Escribe al menos 3 letras.");
+  return cached(`s:${q.toLowerCase()}`, async () => {
+    const data = await call("/search", { q, countrycodes: "pe", viewbox: TRUJILLO_VIEWBOX, limit: "6" });
+    return Array.isArray(data) ? data.map(toResult).filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lng)) : [];
+  });
+};
+var reverseGeocode = async (rawLat, rawLng) => {
+  const lat = Number(rawLat);
+  const lng = Number(rawLng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    throw new HttpError(400, "Ubicaci\xF3n inv\xE1lida.");
+  }
+  const key = `r:${lat.toFixed(4)},${lng.toFixed(4)}`;
+  const [hit] = await cached(key, async () => {
+    const data = await call("/reverse", { lat: String(lat), lon: String(lng), zoom: "18" });
+    if (!data || data.error) return [{ address: `Punto en el mapa (${lat.toFixed(5)}, ${lng.toFixed(5)})`, lat, lng }];
+    return [{ ...toResult(data), lat, lng }];
+  });
+  return hit;
+};
+
+// server/routes/geo.routes.ts
 var router11 = (0, import_express11.Router)();
-router11.use("/auth", auth_routes_default);
-router11.use("/payments", payment_routes_default);
-router11.use("/settlements", settlement_routes_default);
-router11.use("/rides", ride_routes_default);
-router11.use("/wallet", wallet_routes_default);
-router11.use("/topups", topup_routes_default);
-router11.use("/audit", audit_routes_default);
-router11.use("/ledger", ledger_routes_default);
-router11.use("/notifications", notification_routes_default);
-router11.use("/pricing", pricing_routes_default);
-var routes_default = router11;
+router11.use(requireSession);
+router11.use((0, import_express_rate_limit5.default)({
+  windowMs: 60 * 1e3,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Demasiadas b\xFAsquedas. Espera un momento." }
+}));
+var handle3 = (fn) => async (req, res) => {
+  try {
+    res.json({ success: true, ...await fn(req) });
+  } catch (err) {
+    if (err instanceof HttpError) return res.status(err.statusCode).json({ success: false, message: err.message });
+    console.error("[GEO] Error inesperado:", err);
+    res.status(500).json({ success: false, message: "Error del servidor. Intenta de nuevo." });
+  }
+};
+router11.get("/search", handle3(async (req) => ({ results: await searchAddress(req.query.q) })));
+router11.get("/reverse", handle3(async (req) => ({ place: await reverseGeocode(req.query.lat, req.query.lng) })));
+var geo_routes_default = router11;
+
+// server/routes/index.ts
+var router12 = (0, import_express12.Router)();
+router12.use("/auth", auth_routes_default);
+router12.use("/payments", payment_routes_default);
+router12.use("/settlements", settlement_routes_default);
+router12.use("/rides", ride_routes_default);
+router12.use("/wallet", wallet_routes_default);
+router12.use("/topups", topup_routes_default);
+router12.use("/audit", audit_routes_default);
+router12.use("/ledger", ledger_routes_default);
+router12.use("/notifications", notification_routes_default);
+router12.use("/pricing", pricing_routes_default);
+router12.use("/geo", geo_routes_default);
+var routes_default = router12;
 
 // server/app.ts
 var createApp = () => {
-  const app = (0, import_express12.default)();
+  const app = (0, import_express13.default)();
   app.set("trust proxy", 1);
-  app.use(import_express12.default.json({ limit: "1mb" }));
-  app.use(import_express12.default.urlencoded({ extended: true, limit: "1mb" }));
+  app.use(import_express13.default.json({ limit: "1mb" }));
+  app.use(import_express13.default.urlencoded({ extended: true, limit: "1mb" }));
   configureSecurity(app);
-  const api = (0, import_express12.Router)();
+  const api = (0, import_express13.Router)();
   api.get("/api/health", (req, res) => {
     res.json({ status: "ok", message: "Z\xE9nith Enterprise Backend Running" });
   });
@@ -3311,7 +3420,7 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = import_path2.default.join(process.cwd(), "dist");
-    app.use(import_express13.default.static(distPath));
+    app.use(import_express14.default.static(distPath));
     app.get("*", (req, res) => {
       if (req.path.includes("/api/")) {
         return res.status(404).json({ success: false, message: "Ruta no encontrada." });
