@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.3.0-admin-approval] - 2026-11-17
+### Added
+- Panel de administración para aprobar/rechazar motorizados: ya no se hace a mano por phpMyAdmin.
+- Migración `004_admin_drivers.sql`: columnas `rejection_reason`, `reviewed_by`, `reviewed_at` en `driver_profiles`.
+- `admin.service.ts` y `/api/admin/drivers` (`GET` listar con filtro `?status=`, `POST /:id/approve`, `POST /:id/reject` con motivo obligatorio), protegidos por `requireAppRole(['admin'])`; reutiliza `users.is_admin` y `audit_logs`, sin crear un rol ni un mecanismo de auth nuevo.
+- App: `AdminHome.tsx` (pestañas Pendientes/Aprobados/Rechazados, aprobar o rechazar con motivo) accesible por el ícono de escudo en el header, solo visible si `user.isAdmin`.
+- `AdminApi` y tipos `ApiDriverApplication`/`DriverReviewStatus` en `src/api`.
+- Prueba `test:admin` (11 casos) contra MariaDB real; suite completa en verde (127 pruebas en total).
+### Note
+- El claim `adm` del token queda fijo al iniciar sesión: si se otorga `is_admin = 1` por SQL directo, esa cuenta debe volver a loguearse para que el panel la reconozca.
+
+---
+
 ## [2.2.0-food-marketplace] - 2026-11-17
 ### Added
 - Marketplace de comida (FOOD-001), **completo end-to-end** (backend + app): restaurantes publican su menú **sin costo**; Zénith solo gana con la comisión de envío ya existente (10%, ADR-004).

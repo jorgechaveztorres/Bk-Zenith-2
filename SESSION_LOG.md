@@ -1,5 +1,23 @@
 # Registro de Sesión
 
+**Fecha:** 17 de Noviembre de 2026
+**Agente:** Claude (Sonnet 5)
+**Fase:** MySQL/cPanel — Panel de aprobación de motorizados
+
+## Objetivo Completado
+- Panel de administración para aprobar/rechazar motorizados (parte de APP-002), reemplazando la aprobación manual por phpMyAdmin.
+- Backend: migración `004_admin_drivers.sql`, `AdminService` (listar/aprobar/rechazar), rutas `/api/admin/drivers/*` protegidas por `requireAppRole(['admin'])`, reutilizando `users.is_admin` y `audit_logs`.
+- Frontend: `AdminHome.tsx` con pestañas Pendientes/Aprobados/Rechazados, accesible por el ícono de escudo en el header solo si `user.isAdmin`.
+- Prueba `test:admin` (11 aserciones) contra MariaDB real. Suite completa 127/127 en verde. `npm run lint` y `npm run build` limpios.
+- Commit `feat(admin): panel de aprobación/rechazo de motorizados` en `zenith/mysql-login`.
+
+## Pendiente / Siguiente
+- Billetera/Yape (Culqi): revisar esquema ya existente (`wallets`, `wallet_movements`, `topup_requests`, `topup_audit`, `bank_movements`, `processed_bank_movements`, `ride_settlements`, `accounting_entries`, `accounting_lines`) y `wallet.routes.ts`/`topup.routes.ts` antes de escribir código nuevo.
+- Nota para el siguiente agente: el claim `adm` del JWT queda fijo al momento de iniciar sesión; si se otorga `is_admin=1` por SQL directo hay que volver a loguear esa cuenta.
+- No se hizo verificación visual con Playwright de esta pantalla (sí se verificó con 11 pruebas de backend contra la API real).
+
+---
+
 **Fecha:** 18 de Septiembre de 2026
 **Agente:** ZENITH_LEAD_ARCHITECT_AGENT
 **Fase:** Zénith MVP V1.1 — Dominio Operativo de Motorizados y Envíos (Sprint OPS-V1.1)
