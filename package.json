@@ -23,7 +23,8 @@
     "test:auth": "tsx scripts/test-auth-mysql.ts",
     "test:rides": "tsx scripts/test-rides-mysql.ts",
     "test:realtime": "tsx scripts/test-realtime-mysql.ts",
-    "test:app": "tsx scripts/test-app-client.ts"
+    "test:app": "tsx scripts/test-app-client.ts",
+    "test:food": "tsx scripts/test-food-mysql.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

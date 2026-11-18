@@ -10,6 +10,7 @@ import notificationRoutes from './notification.routes';
 import pricingRoutes from './pricing.routes';
 import authRoutes from './auth.routes';
 import geoRoutes from './geo.routes';
+import restaurantRoutes from './restaurants.routes';
 
 const router = Router();
 
@@ -24,5 +25,6 @@ router.use('/ledger', ledgerRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/pricing', pricingRoutes);
 router.use('/geo', geoRoutes);
+router.use('/restaurants', restaurantRoutes);
 
 export default router;

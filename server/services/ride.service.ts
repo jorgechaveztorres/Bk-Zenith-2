@@ -53,12 +53,33 @@ export interface DeliveryDetails {
   notes?: string;
 }
 
+/** Ítem de comida tal como quedó fijado al momento del pedido (precio congelado). */
+export interface FoodOrderItem {
+  menuItemId: string;
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+export interface FoodOrderDetails {
+  restaurantId: string;
+  restaurantName: string;
+  items: FoodOrderItem[];
+  subtotal: number;
+  notes?: string;
+}
+
+export type OrderType = 'DELIVERY' | 'FOOD';
+
 export interface RequestRideInput {
   quote: ServerQuoteResult;
   passengerId: string;
   paymentMethod?: string;
   idempotencyKey?: string;
   delivery?: DeliveryDetails;
+  orderType?: OrderType;
+  restaurantId?: string;
+  food?: FoodOrderDetails;
 }
 
 export interface RideView {
@@ -76,6 +97,9 @@ export interface RideView {
   distanceKm: number | null;
   paymentMethod: string;
   delivery: DeliveryDetails | null;
+  orderType: OrderType;
+  food: FoodOrderDetails | null;
+  restaurantId: string | null;
   createdAt: string;
   acceptedAt: string | null;
   startedAt: string | null;
@@ -92,26 +116,33 @@ const parseJson = <T>(v: unknown): T | null => {
   return v as T;
 };
 
-export const toRideView = (r: RowDataPacket): RideView => ({
-  id: String(r.id),
-  status: r.status as RideStatus,
-  passengerId: String(r.passenger_id),
-  passengerName: r.passenger_name ?? null,
-  driverId: r.driver_id ?? null,
-  driverName: r.driver_name ?? null,
-  driverPhone: r.driver_phone ?? null,
-  origin: { address: String(r.origin_address), lat: toNum(r.origin_lat), lng: toNum(r.origin_lng) },
-  destination: { address: String(r.destination_address), lat: toNum(r.destination_lat), lng: toNum(r.destination_lng) },
-  driverLocation: r.driver_lat !== null && r.driver_lat !== undefined ? { lat: toNum(r.driver_lat), lng: toNum(r.driver_lng) } : null,
-  price: toNum(r.protected_price),
-  distanceKm: r.distance_km !== null ? toNum(r.distance_km) : null,
-  paymentMethod: String(r.payment_method),
-  delivery: parseJson<DeliveryDetails>(r.package_info),
-  createdAt: toIso(r.created_at) || '',
-  acceptedAt: toIso(r.accepted_at),
-  startedAt: toIso(r.started_at),
-  completedAt: toIso(r.completed_at),
-});
+export const toRideView = (r: RowDataPacket): RideView => {
+  const orderType = (r.order_type === 'FOOD' ? 'FOOD' : 'DELIVERY') as OrderType;
+  const isFood = orderType === 'FOOD';
+  return {
+    id: String(r.id),
+    status: r.status as RideStatus,
+    passengerId: String(r.passenger_id),
+    passengerName: r.passenger_name ?? null,
+    driverId: r.driver_id ?? null,
+    driverName: r.driver_name ?? null,
+    driverPhone: r.driver_phone ?? null,
+    origin: { address: String(r.origin_address), lat: toNum(r.origin_lat), lng: toNum(r.origin_lng) },
+    destination: { address: String(r.destination_address), lat: toNum(r.destination_lat), lng: toNum(r.destination_lng) },
+    driverLocation: r.driver_lat !== null && r.driver_lat !== undefined ? { lat: toNum(r.driver_lat), lng: toNum(r.driver_lng) } : null,
+    price: toNum(r.protected_price),
+    distanceKm: r.distance_km !== null ? toNum(r.distance_km) : null,
+    paymentMethod: String(r.payment_method),
+    delivery: isFood ? null : parseJson<DeliveryDetails>(r.package_info),
+    orderType,
+    food: isFood ? parseJson<FoodOrderDetails>(r.package_info) : null,
+    restaurantId: r.restaurant_id ?? null,
+    createdAt: toIso(r.created_at) || '',
+    acceptedAt: toIso(r.accepted_at),
+    startedAt: toIso(r.started_at),
+    completedAt: toIso(r.completed_at),
+  };
+};
 
 const lockRide = async (conn: PoolConnection, rideId: string): Promise<RowDataPacket> => {
   const [rows] = await conn.query<RowDataPacket[]>(
@@ -149,12 +180,18 @@ export class RideService {
       .update(JSON.stringify({ p: input.passengerId, q: quote.quoteId, f: quote.totalFare.toFixed(2) }))
       .digest('hex');
 
-    const delivery: DeliveryDetails | null = input.delivery ? {
+    const orderType: OrderType = input.orderType === 'FOOD' ? 'FOOD' : 'DELIVERY';
+
+    const delivery: DeliveryDetails | null = orderType === 'DELIVERY' && input.delivery ? {
       description: cleanText(input.delivery.description, 300),
       receptorName: cleanText(input.delivery.receptorName, 150),
       receptorPhone: cleanText(input.delivery.receptorPhone, 20),
       notes: cleanText(input.delivery.notes, 300),
     } : null;
+
+    if (orderType === 'FOOD' && !input.food) throw new HttpError(400, 'Falta el detalle del pedido de comida.');
+    const food: FoodOrderDetails | null = orderType === 'FOOD' && input.food ? input.food : null;
+    const packageInfo = orderType === 'FOOD' ? food : delivery;
 
     const searchSeconds = await getNumberSetting('search_timeout_seconds', 300);
     const otpMinutes = await getNumberSetting('pickup_otp_minutes', 60);
@@ -188,19 +225,19 @@ export class RideService {
 
       await conn.execute(
         `INSERT INTO rides (
-           id, passenger_id, passenger_name, passenger_phone, status, order_type, city,
+           id, passenger_id, passenger_name, passenger_phone, status, order_type, restaurant_id, city,
            origin_address, origin_lat, origin_lng, destination_address, destination_lat, destination_lng,
            distance_km, duration_min, protected_price, normal_fare, multiplier, payment_method,
            pricing_seal, pricing_version, quote_id, solicitude_status, package_info,
            otp_code, otp_hash, otp_expires_at, search_expires_at)
-         VALUES (?, ?, ?, ?, 'SEARCHING_DRIVER', 'DELIVERY', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REQUESTED', ?,
+         VALUES (?, ?, ?, ?, 'SEARCHING_DRIVER', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REQUESTED', ?,
                  ?, ?, NOW(3) + INTERVAL ? MINUTE, NOW(3) + INTERVAL ? SECOND)`,
         [
-          rideId, input.passengerId, user.full_name, user.phone, city,
+          rideId, input.passengerId, user.full_name, user.phone, orderType, input.restaurantId ?? null, city,
           quote.origin.address.slice(0, 255), quote.origin.lat, quote.origin.lng,
           quote.destination.address.slice(0, 255), quote.destination.lat, quote.destination.lng,
           quote.distance, quote.duration ?? null, quote.totalFare, quote.normalFare, quote.multiplier, paymentMethod,
-          quote.pricingSeal, quote.pricingVersion, quote.quoteId, delivery ? JSON.stringify(delivery) : null,
+          quote.pricingSeal, quote.pricingVersion, quote.quoteId, packageInfo ? JSON.stringify(packageInfo) : null,
           otpCode, hashOtp(rideId, otpCode), otpMinutes, searchSeconds,
         ]
       );
