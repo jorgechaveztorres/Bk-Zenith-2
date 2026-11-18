@@ -188,3 +188,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Security:** Endurecimiento (Hardening) de `firestore.rules` cerrando todas las brechas cliente-servidor en colecciones contables/financieras (`wallets`, `transactions`, `accounting_ledger`, `audit_logs`).
 - **Refactor:** Migración de `WalletService`, `PaymentEngine`, `TransactionEngine`, `AuditEngine` y `LedgerEngine` de mutadores directos a clientes Proxy hacia `server/routes/*`.
 - **Refactor:** `PassengerFlow.tsx` purgado de dependencias de débito client-side. Todo manejado en la nube por `PaymentService`.
+
+## [Paquete 7] - 2026-11-18 - Limpieza técnica
+### Eliminado
+- Pantallas/servicios muertos de la era Firebase: DriverFlow.tsx, ControlCenter.tsx, PassengerFlow.tsx, components/delivery/* (4 archivos), components/test/* (3 archivos, test harness no importado), services/OperationalEngine.ts, services/WalletService.ts, components/driver/DriverDashboard.tsx, components/driver/DriverTopupModal.tsx — confirmado que ninguno era alcanzable desde src/App.tsx.
+- Scripts de prueba huérfanos: test-financial-reconciliation.ts, test-ride-settlement.ts (movidos a scripts/_deprecated, excluidos del build).
+### Movido (no eliminado, pendiente decisión futura)
+- Rutas/servicios dependientes de Firebase/Firestore sin uso desde la app MySQL actual: payment, settlement, audit, ledger, notification (routes + controllers + services) y financial-reconciliation/reconciliation.service.ts → server/_deprecated/, excluido del build vía tsconfig.json.
+- routes/index.ts: removidos los montajes de /payments, /settlements, /audit, /ledger, /notifications.
+### Verificado
+- `tsc --noEmit` limpio, `npm run build` exitoso, servidor arranca y responde 200.

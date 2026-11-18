@@ -22,5 +22,10 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "exclude": [
+    "server/_deprecated",
+    "node_modules",
+    "scripts/_deprecated"
+  ]
 }

@@ -30,10 +30,8 @@
     "login": "SMS solo registro y recuperar clave"
   },
   "pending_cleanup": [
-    "borrar app zenith-wstest en cPanel",
-    "rescatar partes útiles de 3 ramas sin fusionar (seguridad financiera)",
-    "borrar pantallas/servicios viejos de Firebase sin usar (DriverFlow, ControlCenter, PassengerFlow, OperationalEngine, src/services/WalletService.ts, etc. — ya no los importa App.tsx)",
-    "ride-settlement.service.ts y settlement/payment/audit/ledger routes siguen en Firebase/Firestore y no se usan desde la app MySQL; revisar si se borran o se migran"
+    "borrar app zenith-wstest en cPanel (manual, fuera de alcance del agente)",
+    "rescatar partes útiles de 3 ramas sin fusionar (seguridad financiera) (manual)"
   ],
   "app": {
     "done": [
@@ -57,5 +55,6 @@
       "GPS en segundo plano real (requiere APK nativo, no es posible 100% en navegador)",
       "pantallas viejas sin usar (PassengerFlow, DriverFlow, admin, LSO, heart test) — borrar o migrar"
     ]
-  }
+  },
+  "last_updated": "2026-11-18"
 }

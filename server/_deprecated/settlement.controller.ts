@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
-import { SettlementService } from '../services/settlement.service';
+import { SettlementService } from './settlement.service';
 
 export const processSettlement = async (req: AuthenticatedRequest, res: Response) => {
   try {

@@ -247,3 +247,12 @@ Que la app deje de depender de Firebase en su flujo principal: entrar, pedir y r
 - Desplegar servidor en cPanel (rutas `/api/geo`, CORS) y compilar el APK.
 - APP-002: documentos del motorizado + panel admin. Luego billetera/Yape (comisión 10 % desde `app_settings`).
 - Las pantallas viejas (PassengerFlow, DriverFlow, admin, LSO, prueba corazón) siguen en el repo sin usarse.
+
+## Sesión 2026-11-18 - Paquete 7: Limpieza técnica
+**Agente**: Claude (Sonnet 5)
+**Objetivo**: eliminar código muerto de la era Firebase y mover rutas/servicios sin uso a cuarentena.
+**Archivos eliminados**: ver CHANGELOG.md.
+**Archivos movidos**: server/_deprecated/ (8 archivos), scripts/_deprecated/ (2 archivos).
+**Archivos modificados**: server/routes/index.ts (desmontaje de rutas muertas), tsconfig.json (exclude), package.json (scripts npm huérfanos removidos), PROJECT_STATE.json, CHANGELOG.md.
+**Pendiente**: borrar zenith-wstest en cPanel y revisar 3 ramas sin fusionar — ambas son tareas manuales del usuario, fuera del alcance de este agente.
+**Verificación**: tsc --noEmit limpio, npm run build exitoso, server.ts arranca y responde 200 OK.

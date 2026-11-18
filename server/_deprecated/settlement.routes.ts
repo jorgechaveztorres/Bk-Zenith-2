@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/auth.middleware';
-import { processSettlement } from '../controllers/settlement.controller';
+import { processSettlement } from './settlement.controller';
 
 const router = Router();
 

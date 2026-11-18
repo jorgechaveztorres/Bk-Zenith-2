@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
-import { PaymentService } from '../services/payment.service';
+import { PaymentService } from './payment.service';
 
 export const processPayment = async (req: AuthenticatedRequest, res: Response) => {
   try {
