@@ -211,6 +211,9 @@ export const WalletApi = {
   requestTopup: async (amount: number, operationNumber: string) =>
     (await api<{ topup: ApiTopup }>('POST', '/topups', { amount, operationNumber })).topup,
   myTopups: async () => (await api<{ topups: ApiTopup[] }>('GET', '/topups/mine')).topups,
+  culqiConfig: () => api<{ enabled: boolean; publicKey: string | null }>('GET', '/topups/culqi/config'),
+  culqiCharge: async (token: string, amount: number, email?: string) =>
+    (await api<{ topup: ApiTopup }>('POST', '/topups/culqi/charge', { token, amount, email })).topup,
 };
 
 // ---------------------------------------------------------------- Motorizado

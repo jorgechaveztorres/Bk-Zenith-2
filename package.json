@@ -29,7 +29,8 @@
     "test:driver-documents": "tsx scripts/test-driver-documents-mysql.ts",
     "test:order-history": "tsx scripts/test-order-history-mysql.ts",
     "test:rating": "tsx scripts/test-rating-mysql.ts",
-    "test:push": "tsx scripts/test-push-mysql.ts"
+    "test:push": "tsx scripts/test-push-mysql.ts",
+    "test:culqi-topup": "tsx scripts/test-culqi-topup-mysql.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

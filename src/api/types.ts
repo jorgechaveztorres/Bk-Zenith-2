@@ -239,6 +239,9 @@ export interface ApiTopup {
   driverPhone: string | null;
   requestedAmount: number;
   operationNumber: string | null;
+  paymentMethod: 'YAPE_MANUAL' | 'CULQI';
+  grossAmount: number | null;
+  feeAmount: number | null;
   status: TopupStatus;
   rejectionReason: string | null;
   reviewedBy: string | null;

@@ -9,8 +9,11 @@ import type { RowDataPacket } from 'mysql2/promise';
 import { getPool, withTransaction } from '../config/mysql';
 import { WalletService } from './wallet.service';
 import { HttpError } from './http-error';
+import { CulqiService } from './culqi.service';
+import { getNumberSetting } from './settings.service';
 
 export type TopupStatus = 'RECEIPT_SUBMITTED' | 'REJECTED' | 'CREDITED';
+export type TopupPaymentMethod = 'YAPE_MANUAL' | 'CULQI';
 
 export interface TopupView {
   id: string;
@@ -19,6 +22,9 @@ export interface TopupView {
   driverPhone: string | null;
   requestedAmount: number;
   operationNumber: string | null;
+  paymentMethod: TopupPaymentMethod;
+  grossAmount: number | null;
+  feeAmount: number | null;
   status: TopupStatus;
   rejectionReason: string | null;
   reviewedBy: string | null;
@@ -34,7 +40,8 @@ const newId = (): string => `tp_${Date.now().toString(36)}_${Math.random().toStr
 const newReference = (): string => `Z-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
 const SELECT = `
-  SELECT t.id, t.driver_id, t.requested_amount, t.operation_number, t.status,
+  SELECT t.id, t.driver_id, t.requested_amount, t.operation_number, t.payment_method,
+         t.gross_amount, t.fee_amount, t.status,
          t.rejection_reason, t.reviewed_by, t.reviewed_at, t.credited_at, t.created_at,
          u.full_name AS driver_name, u.phone AS driver_phone
   FROM topup_requests t JOIN users u ON u.id = t.driver_id
@@ -47,6 +54,9 @@ const toView = (r: RowDataPacket): TopupView => ({
   driverPhone: r.driver_phone ?? null,
   requestedAmount: money(Number(r.requested_amount)),
   operationNumber: r.operation_number ?? null,
+  paymentMethod: (r.payment_method as TopupPaymentMethod) || 'YAPE_MANUAL',
+  grossAmount: r.gross_amount !== null && r.gross_amount !== undefined ? money(Number(r.gross_amount)) : null,
+  feeAmount: r.fee_amount !== null && r.fee_amount !== undefined ? money(Number(r.fee_amount)) : null,
   status: r.status as TopupStatus,
   rejectionReason: r.rejection_reason ?? null,
   reviewedBy: r.reviewed_by ?? null,
@@ -85,6 +95,55 @@ export class TopupService {
        VALUES (?, ?, ?, ?, ?, 'RECEIPT_SUBMITTED', ?)`,
       [id, newReference(), driverId, money(requested), op, expiresAt]
     );
+    const [rows] = await pool.query<RowDataPacket[]>(`${SELECT} WHERE t.id = ?`, [id]);
+    return toView(rows[0]);
+  }
+
+  /**
+   * Recarga con Culqi (tarjeta/Yape por botón, sin escribir número de operación).
+   * Se cobra el monto completo al motorizado; la comisión de Culqi se descuenta
+   * del monto que se le acredita en la billetera (dejar esto claro en la app).
+   * Al ser una confirmación de Culqi, se acredita de inmediato, sin revisión del admin.
+   */
+  static async chargeWithCulqi(driverId: string, token: unknown, amount: unknown, email: unknown): Promise<TopupView> {
+    const requested = Number(amount);
+    if (!Number.isFinite(requested) || requested < 5 || requested > 2000) {
+      throw new HttpError(400, 'El monto debe estar entre S/ 5 y S/ 2000.');
+    }
+    if (typeof token !== 'string' || !token.trim()) throw new HttpError(400, 'Falta el token de pago de Culqi.');
+
+    const pool = getPool();
+    const [pending] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM topup_requests WHERE driver_id = ? AND status = 'RECEIPT_SUBMITTED' LIMIT 1`, [driverId]
+    );
+    if (pending[0]) throw new HttpError(409, 'Ya tienes una recarga esperando revisión.');
+
+    const [feePct, feeFixed] = await Promise.all([
+      getNumberSetting('culqi_fee_pct', 3.99),
+      getNumberSetting('culqi_fee_fixed', 0.50),
+    ]);
+    const fee = money(requested * (feePct / 100) + feeFixed);
+    const net = money(requested - fee);
+    if (net <= 0) throw new HttpError(400, 'El monto es muy bajo para cubrir la comisión del cobro.');
+
+    const chargeEmail = typeof email === 'string' && email.includes('@') ? email : `motorizado-${driverId}@zenith.pe`;
+    const charge = await CulqiService.createCharge(token, requested, chargeEmail);
+    if (charge.outcomeType !== 'venta_exitosa') {
+      throw new HttpError(402, 'Culqi no confirmó el pago. Intenta de nuevo.');
+    }
+
+    const id = newId();
+    const expiresAt = new Date(Date.now() + 72 * 3600 * 1000);
+    await withTransaction(async (conn) => {
+      await conn.execute(
+        `INSERT INTO topup_requests
+           (id, reference_code, driver_id, requested_amount, payment_method, culqi_charge_id,
+            gross_amount, fee_amount, status, credited_at, expires_at)
+         VALUES (?, ?, ?, ?, 'CULQI', ?, ?, ?, 'CREDITED', NOW(3), ?)`,
+        [id, newReference(), driverId, net, charge.id, money(requested), fee, expiresAt]
+      );
+      await WalletService.applyTopupCredit(conn, driverId, id, net);
+    });
     const [rows] = await pool.query<RowDataPacket[]>(`${SELECT} WHERE t.id = ?`, [id]);
     return toView(rows[0]);
   }

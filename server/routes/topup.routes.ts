@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireSession, requireAppRole, SessionRequest } from '../middlewares/session.middleware';
 import { TopupService, TopupStatus } from '../services/topup.service';
 import { HttpError } from '../services/http-error';
+import { CulqiService } from '../services/culqi.service';
 
 const router = Router();
 router.use(requireSession);
@@ -29,6 +30,15 @@ router.post('/', requireAppRole(['driver']), handle(async (req) => ({
 router.get('/mine', requireAppRole(['driver']), handle(async (req) => ({
   topups: await TopupService.myHistory(uid(req)),
 })));
+
+router.get('/culqi/config', requireAppRole(['driver']), handle(async () => ({
+  enabled: CulqiService.isConfigured(),
+  publicKey: process.env.CULQI_PUBLIC_KEY || null,
+})));
+
+router.post('/culqi/charge', requireAppRole(['driver']), handle(async (req) => ({
+  topup: await TopupService.chargeWithCulqi(uid(req), req.body?.token, req.body?.amount, req.body?.email),
+}), 201));
 
 // --------------------------------------------------------- Rutas del admin
 router.get('/', requireAppRole(['admin']), handle(async (req) => {
