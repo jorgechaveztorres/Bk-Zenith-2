@@ -733,7 +733,28 @@ var GoogleRoutesProvider = class {
     }
   }
 };
-var activeRouteProvider = new GoogleRoutesProvider();
+var EstimateRouteProvider = class {
+  constructor(roadFactor = 1.35, avgSpeedKmh = 22) {
+    this.roadFactor = roadFactor;
+    this.avgSpeedKmh = avgSpeedKmh;
+  }
+  async computeRoute(origin, destination) {
+    const bad = (c) => !Number.isFinite(c.lat) || !Number.isFinite(c.lng) || Math.abs(c.lat) > 90 || Math.abs(c.lng) > 180;
+    if (bad(origin) || bad(destination)) throw new Error("Coordenadas de origen o destino fuera de rango.");
+    const straightKm = getGeodesicDistance(origin.lat, origin.lng, destination.lat, destination.lng);
+    const distanceKm = Number(Math.max(0.3, straightKm * this.roadFactor).toFixed(3));
+    const durationMinutes = Math.max(2, Math.round(distanceKm / this.avgSpeedKmh * 60));
+    return {
+      distanceMeters: Math.round(distanceKm * 1e3),
+      distanceKm,
+      durationSeconds: durationMinutes * 60,
+      durationMinutes,
+      source: "ESTIMATE"
+    };
+  }
+};
+var defaultProvider = () => (process.env.ROUTE_PROVIDER || "").toLowerCase() === "google" ? new GoogleRoutesProvider() : new EstimateRouteProvider();
+var activeRouteProvider = defaultProvider();
 function getRouteProvider() {
   return activeRouteProvider;
 }
