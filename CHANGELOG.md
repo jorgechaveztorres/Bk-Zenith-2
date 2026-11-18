@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.5.0-driver-documents] - 2026-11-18
+### Added
+- Documentos del motorizado (completa APP-002): datos de vehículo/licencia y fotos de la licencia/brevete y del vehículo (placa visible), en vez de aprobar solo con el texto de la solicitud.
+- Migración `006_driver_documents.sql`: columnas `license_photo_path`, `vehicle_photo_path`, `documents_submitted_at` en `driver_profiles`.
+- `driver-documents.service.ts`: valida placa y número de licencia, exige que ambas fotos existan (la recién subida o una ya guardada); al enviar pasa el estado a `UNDER_REVIEW` (si estaba `PENDING` o `REJECTED`) y limpia el motivo de rechazo.
+- `driver-documents.routes.ts`: `POST`/`GET /api/driver/profile` (multipart con `multer`, máx. 5 MB, solo jpg/png/webp) y `GET /api/driver/documents/:driverId/:kind`, que sirve la foto solo al propio motorizado o a un admin — nunca pública. Los archivos se guardan en `uploads/driver-docs/` (fuera de git).
+- `admin.service.ts` expone `hasLicensePhoto`/`hasVehiclePhoto`/`documentsSubmittedAt` para el panel.
+- App: `MyDocuments.tsx` (formulario + fotos, bloqueado una vez aprobado) con ícono propio en el header; `AdminHome.tsx` muestra miniaturas de ambas fotos en las solicitudes pendientes/en revisión antes de aprobar o rechazar.
+- Prueba `test:driver-documents` (12 casos) contra MariaDB real; suite completa 159/159 en verde.
+### Decided
+- El usuario fijó el orden de las siguientes prioridades de desarrollo (ver `ROADMAP.md`), dejando Google Routes al final.
+
+---
+
 ## [2.4.0-wallet] - 2026-11-17
 ### Added
 - Billetera del motorizado con modelo InDrive: el cliente paga en efectivo/Yape directo al motorizado; el motorizado le debe a Zénith la comisión de cada pedido completado.

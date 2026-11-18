@@ -3,16 +3,16 @@
   "repository_version": "2.1.0-app-mysql",
   "architecture_version": "3.0.0-mysql-cpanel-sin-firebase",
   "current_phase": "Migración a MySQL en cPanel (sin Firebase): servidor listo y app núcleo (login, cliente, motorizado) ya sobre la API",
-  "current_sprint": "Billetera (deuda de comisión) + recarga Yape manual completada. Siguiente: a decidir con el usuario.",
+  "current_sprint": "Documentos del motorizado (APP-002 completo) + billetera. El usuario fijó el orden del resto: SMS real, historial de pedidos, calificación, push+GPS en segundo plano, recarga con OCR, limpieza técnica, APK firmado, backups/secretos, y Google Routes al final.",
   "current_agent": "CLAUDE_OPUS_5_5",
   "active_branch": "zenith/mysql-login (deploy: rama deploy-cpanel)",
-  "last_commit": "feat(wallet): billetera de deuda de comisión y recarga Yape manual",
-  "repository_status": "Build Green — tsc 0 errores, build OK; pruebas auth 23, rides 38, realtime 13, app 27, food 15, admin 11, wallet 20 (147 en total) contra MariaDB local",
-  "next_work_package": "Billetera completada con modelo InDrive (el cliente paga en efectivo/Yape directo al motorizado; el motorizado le debe a Zénith la comisión de cada pedido). Backend: migración 005 (operation_number/rejection_reason/reviewed_by/reviewed_at en topup_requests; setting wallet_debt_limit=2), wallet.service.ts (cobra comisión al completar un pedido salvo los new_driver_free_days=14 desde la aprobación, bloquea la conexión si la deuda > wallet_debt_limit, aplica recargas acreditadas), topup.service.ts (flujo manual V1 sin OCR/IA: motorizado pide con monto + nº de operación Yape; admin acredita o rechaza con motivo). Rutas: GET /wallet/me, GET /wallet/movements, POST /topups, GET /topups/mine, y para el admin GET /topups?status=, POST /topups/:id/credit, POST /topups/:id/reject. App: WalletHome.tsx (deuda, días gratis, pedir recarga, historial) con ícono de billetera solo para motorizados; pestaña 'Recargas' dentro del panel admin (AdminTopups.tsx). Se eliminaron los controladores/test de wallet y topup que seguían atados a Firebase (dead code, nunca migrado, desactivado en producción). Prueba test:wallet (20 casos). Pendiente para una siguiente iteración si se necesita: subir foto del comprobante Yape / OCR automático (hoy es 100% manual), reconciliación con movimientos bancarios reales. Siguientes paquetes posibles (sin pedir aún): documentos del motorizado (fotos de licencia/brevete), calificación, historial de pedidos, limpieza de pantallas viejas de Firebase (DriverFlow/ControlCenter/etc., no usadas por App.tsx pero siguen en el repo).",
+  "last_commit": "feat(driver): documentos del motorizado (vehículo, licencia y fotos)",
+  "repository_status": "Build Green — tsc 0 errores, build OK; pruebas auth 23, rides 38, realtime 13, app 27, food 15, admin 11, wallet 20, driver-documents 12 (159 en total) contra MariaDB local",
+  "next_work_package": "Documentos del motorizado completados (migración 006: license_photo_path/vehicle_photo_path/documents_submitted_at en driver_profiles). driver-documents.service.ts valida placa+licencia y exige ambas fotos (la nueva o una ya guardada); driver-documents.routes.ts: POST/GET /api/driver/profile (multipart con multer, máx 5MB, solo jpg/png/webp) y GET /api/driver/documents/:driverId/:kind (solo el propio motorizado o un admin, nunca público; archivos en uploads/driver-docs/ fuera de git). Enviar documentos pasa el estado a UNDER_REVIEW y limpia el motivo de rechazo. App: MyDocuments.tsx (formulario + fotos, bloqueado tras aprobar) con ícono propio en el header; AdminHome.tsx muestra miniaturas de ambas fotos en las solicitudes antes de aprobar/rechazar. Prueba test:driver-documents (12 casos). ORDEN DE PRIORIDADES decidido por el usuario (2026-11-17, Google Routes al final): 1) documentos del motorizado [HECHO], 2) SMS real (hoy SMS_PROVIDER=console, el código solo sale en el log), 3) historial de pedidos, 4) calificación de viajes, 5) push notifications + GPS en segundo plano, 6) recarga Yape con OCR/IA del comprobante (hoy 100% manual), 7) limpieza técnica (pantallas/servicios Firebase muertos, ramas sin fusionar, borrar zenith-wstest en cPanel), 8) APK firmado para Play Store, 9) backups de BD + revisar secretos de producción en cPanel, 10) Google Routes (al final).",
   "next_agent": "Claude",
   "blocked": false,
   "blockers": [],
-  "updated_at": "2026-11-17T19:10:00-05:00",
+  "updated_at": "2026-11-18T00:10:00-05:00",
   "server": {
     "url": "https://shocos.nom.pe/zenith-api",
     "db": "MariaDB shocos_zenith",
@@ -44,14 +44,16 @@
       "motorizado: conectarse con GPS, oferta 15 s, aceptar/rechazar, en camino, llegué, código, entregado, navegación con Google Maps/Waze por enlace",
       "marketplace de comida: RestaurantHome (publicar/menú/abrir-cerrar) y FoodOrder (navegar/pedir), reusa el motor de precio/despacho",
       "panel admin: aprobar/rechazar motorizados (AdminHome.tsx)",
-      "billetera: deuda de comisión + recarga Yape manual (WalletHome.tsx, AdminTopups.tsx)"
+      "billetera: deuda de comisión + recarga Yape manual (WalletHome.tsx, AdminTopups.tsx)",
+      "documentos del motorizado: vehículo/licencia + fotos (MyDocuments.tsx), con miniaturas en el panel admin"
     ],
     "mapa": "OpenStreetMap + Leaflet (gratis); antes del lanzamiento con mucho tráfico cambiar tiles/buscador a proveedor pagado o propio",
     "firebase_en_bundle": false,
     "pendiente": [
-      "documentos motorizado (fotos de licencia/brevete)",
-      "calificación",
+      "SMS real (hoy SMS_PROVIDER=console)",
       "historial de pedidos",
+      "calificación",
+      "push notifications + GPS en segundo plano",
       "pantallas viejas sin usar (PassengerFlow, DriverFlow, admin, LSO, heart test) — borrar o migrar"
     ]
   }

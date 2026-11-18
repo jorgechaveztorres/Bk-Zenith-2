@@ -93,8 +93,19 @@ Fase 6: Despliegue y Prod              ░░░░░░░░░░░░░�
 - [x] APP-001: migrar login/cliente/motorizado de Firebase a MySQL.
 - [x] Marketplace de comida (FOOD-001): publicar restaurante, menú, pedidos, comisión de envío.
 - [x] Panel de aprobación del admin (parte de APP-002): aprobar/rechazar motorizados desde la app, ya no por phpMyAdmin.
-- [x] Billetera/Yape: deuda de comisión 10 % (mín. S/ 0.50, 14 días gratis para motorizados nuevos), recarga Yape manual revisada por el admin, bloqueo al superar la deuda límite.
-- [ ] Documentos del motorizado (subida de fotos de licencia/brevete) — pendiente, no pedido aún.
-- [ ] Recarga Yape con OCR/IA del comprobante (hoy es 100% manual: el motorizado escribe el número de operación).
+- [x] Billetera/Yape: deuda de comisión 10 % (mín. S/ 0.50, 14 días gratis para motorizados nuevos), recarga Yape manual revisada por el admin, bloqueo casi al llegar a S/ 0 (modelo InDrive: nunca acumula deuda).
+- [x] Documentos del motorizado: datos de vehículo/licencia + fotos de licencia y vehículo, con revisión del admin antes de aprobar.
+
+### Orden de prioridades fijado por el usuario (17-nov-2026, Google Routes al final)
+1. [x] Documentos del motorizado.
+2. [ ] SMS real (hoy `SMS_PROVIDER=console`, el código solo sale en el log del servidor).
+3. [ ] Historial de pedidos.
+4. [ ] Calificación de viajes.
+5. [ ] Push notifications + GPS en segundo plano.
+6. [ ] Recarga Yape con OCR/IA del comprobante (hoy es 100% manual: el motorizado escribe el número de operación).
+7. [ ] Limpieza técnica: pantallas/servicios Firebase muertos, ramas sin fusionar, borrar `zenith-wstest` en cPanel.
+8. [ ] APK firmado para Play Store.
+9. [ ] Backups de la base de datos + revisar secretos de producción en cPanel.
+10. [ ] Google Routes (reactivar con tope de cuota y alerta de presupuesto) — al final.
 - [ ] APK y prueba con 3–5 motorizados; SMS real; términos y privacidad; respaldos de la BD.
 - [ ] Antes del lanzamiento: Google Routes con tope de cuota y alerta de presupuesto.

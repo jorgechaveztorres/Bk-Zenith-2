@@ -1,5 +1,22 @@
 # Registro de Sesión
 
+**Fecha:** 18 de Noviembre de 2026
+**Agente:** Claude (Sonnet 5)
+**Fase:** MySQL/cPanel — Documentos del motorizado (APP-002 completo)
+
+## Objetivo Completado
+- Documentos del motorizado: datos de vehículo/licencia + fotos de licencia y vehículo, con revisión del admin. Completa APP-002 (lo que faltaba tras el panel de aprobar/rechazar de la sesión anterior).
+- Migración `006_driver_documents.sql`; `driver-documents.service.ts` (valida placa/licencia, exige ambas fotos); `driver-documents.routes.ts` con `multer` (multipart, 5MB máx, jpg/png/webp) — las fotos se sirven solo al propio motorizado o a un admin, nunca públicas, guardadas en `uploads/driver-docs/` (añadido a `.gitignore`).
+- App: `MyDocuments.tsx` para el motorizado (ícono propio en el header); `AdminHome.tsx` ahora muestra miniaturas de ambas fotos en cada solicitud pendiente/en revisión.
+- Prueba `test:driver-documents` (12 aserciones). Suite completa 159/159 en verde (`npm run lint` y `npm run build` limpios).
+- El usuario pidió que yo decida el orden de las siguientes prioridades de desarrollo, dejando Google Routes al final. Quedó fijado en `PROJECT_STATE.json` y `ROADMAP.md`: 1) documentos [hecho], 2) SMS real, 3) historial de pedidos, 4) calificación, 5) push + GPS en segundo plano, 6) recarga con OCR/IA, 7) limpieza técnica, 8) APK firmado, 9) backups/secretos, 10) Google Routes.
+
+## Pendiente / Siguiente
+- Seguir con el paquete 2 del orden fijado: **SMS real** (hoy `SMS_PROVIDER=console`; el código solo sale en el log del servidor, así que nadie fuera de pruebas puede registrarse todavía).
+- No se hizo verificación visual con Playwright de las pantallas nuevas (sí 12 pruebas de backend contra la API real).
+
+---
+
 **Fecha:** 17 de Noviembre de 2026 (parte 2)
 **Agente:** Claude (Sonnet 5)
 **Fase:** MySQL/cPanel — Billetera (deuda de comisión) + recarga Yape manual
