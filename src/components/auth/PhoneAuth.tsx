@@ -1,9 +1,9 @@
 /**
- * ZÉNITH — Entrar con celular + clave (reemplaza el login de Google/Firebase).
- * SMS solo para registrarse y para recuperar la clave.
+ * ZÉNITH — Entrar con correo + clave.
+ * El código de verificación (registro y recuperar clave) llega por correo, no por SMS.
  */
 import React, { useState } from 'react';
-import { Phone, Lock, User as UserIcon, Car, KeyRound, ArrowLeft, Loader2 } from 'lucide-react';
+import { Mail, Phone, Lock, User as UserIcon, Car, KeyRound, ArrowLeft, Loader2 } from 'lucide-react';
 import { AuthApi, MIN_PASSWORD } from '../../api/endpoints';
 import { errorMessage } from '../../api/http';
 import type { ApiUser, AppRole } from '../../api/types';
@@ -15,7 +15,7 @@ interface Props {
 }
 
 const onlyDigits = (v: string, max: number) => v.replace(/\D/g, '').slice(0, max);
-const validPhone = (p: string) => /^9\d{8}$/.test(p);
+const validEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 
 const inputCls =
   'w-full bg-white/5 border border-white/10 focus:border-[#39FF14]/60 rounded-xl pl-11 pr-4 py-3.5 text-white placeholder-gray-500 outline-none transition-colors';
@@ -31,6 +31,7 @@ function Field({ icon, ...props }: React.InputHTMLAttributes<HTMLInputElement> &
 
 export default function PhoneAuth({ onSignedIn }: Props) {
   const [mode, setMode] = useState<Mode>('login');
+  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
@@ -63,26 +64,25 @@ export default function PhoneAuth({ onSignedIn }: Props) {
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (busy) return;
-    if (!validPhone(phone)) {
-      setError('El celular debe tener 9 dígitos y empezar con 9.');
+    if (!validEmail(email)) {
+      setError('Escribe un correo válido.');
       return;
     }
-    const needsPassword = mode === 'login' || mode === 'register-code' || mode === 'forgot-code';
-    if (needsPassword && mode !== 'login' && password.length < MIN_PASSWORD) {
+    if ((mode === 'register-code' || mode === 'forgot-code') && password.length < MIN_PASSWORD) {
       setError(`La clave debe tener al menos ${MIN_PASSWORD} caracteres.`);
       return;
     }
     if ((mode === 'register-code' || mode === 'forgot-code') && code.length < 4) {
-      setError('Escribe el código que llegó por SMS.');
+      setError('Escribe el código que llegó por correo.');
       return;
     }
 
     switch (mode) {
       case 'login':
-        return run(async () => onSignedIn(await AuthApi.login(phone, password)));
+        return run(async () => onSignedIn(await AuthApi.login(email, password)));
       case 'register':
         return run(async () => {
-          const r = await AuthApi.startRegistration(phone);
+          const r = await AuthApi.startRegistration(email);
           setMode('register-code');
           setInfo(r.message);
         });
@@ -91,15 +91,18 @@ export default function PhoneAuth({ onSignedIn }: Props) {
           setError('Escribe tu nombre completo.');
           return;
         }
-        return run(async () => onSignedIn(await AuthApi.completeRegistration({ phone, code, password, fullName: fullName.trim(), role })));
+        return run(async () => onSignedIn(await AuthApi.completeRegistration({
+          email, code, password, fullName: fullName.trim(), role,
+          phone: phone ? phone : undefined,
+        })));
       case 'forgot':
         return run(async () => {
-          const r = await AuthApi.startPasswordReset(phone);
+          const r = await AuthApi.startPasswordReset(email);
           setMode('forgot-code');
           setInfo(r.message);
         });
       case 'forgot-code':
-        return run(async () => onSignedIn(await AuthApi.completePasswordReset(phone, code, password)));
+        return run(async () => onSignedIn(await AuthApi.completePasswordReset(email, code, password)));
     }
   };
 
@@ -112,9 +115,9 @@ export default function PhoneAuth({ onSignedIn }: Props) {
   };
   const cta: Record<Mode, string> = {
     login: 'Entrar',
-    register: 'Enviarme el código por SMS',
+    register: 'Enviarme el código por correo',
     'register-code': 'Crear mi cuenta',
-    forgot: 'Enviarme el código por SMS',
+    forgot: 'Enviarme el código por correo',
     'forgot-code': 'Guardar clave y entrar',
   };
 
@@ -136,14 +139,14 @@ export default function PhoneAuth({ onSignedIn }: Props) {
         </div>
 
         <Field
-          icon={<Phone size={18} />}
-          type="tel"
-          inputMode="numeric"
-          autoComplete="tel-national"
-          placeholder="Celular (9 dígitos)"
-          value={phone}
+          icon={<Mail size={18} />}
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+          placeholder="Correo"
+          value={email}
           disabled={mode === 'register-code' || mode === 'forgot-code'}
-          onChange={(e) => setPhone(onlyDigits(e.target.value, 9))}
+          onChange={(e) => setEmail(e.target.value.trim())}
         />
 
         {(mode === 'register-code' || mode === 'forgot-code') && (
@@ -152,7 +155,7 @@ export default function PhoneAuth({ onSignedIn }: Props) {
             type="text"
             inputMode="numeric"
             autoComplete="one-time-code"
-            placeholder="Código del SMS"
+            placeholder="Código del correo"
             value={code}
             onChange={(e) => setCode(onlyDigits(e.target.value, 6))}
           />
@@ -167,6 +170,15 @@ export default function PhoneAuth({ onSignedIn }: Props) {
               placeholder="Nombre completo"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
+            />
+            <Field
+              icon={<Phone size={18} />}
+              type="tel"
+              inputMode="numeric"
+              autoComplete="tel-national"
+              placeholder="Celular (opcional, 9 dígitos)"
+              value={phone}
+              onChange={(e) => setPhone(onlyDigits(e.target.value, 9))}
             />
             <div className="grid grid-cols-2 gap-3">
               {([
@@ -223,7 +235,7 @@ export default function PhoneAuth({ onSignedIn }: Props) {
             type="button"
             disabled={busy}
             onClick={() => run(async () => {
-              const r = mode === 'register-code' ? await AuthApi.startRegistration(phone) : await AuthApi.startPasswordReset(phone);
+              const r = mode === 'register-code' ? await AuthApi.startRegistration(email) : await AuthApi.startPasswordReset(email);
               setInfo(r.message);
             })}
             className="w-full text-xs font-mono text-gray-400 hover:text-white pt-1"

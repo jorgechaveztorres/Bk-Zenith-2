@@ -13,28 +13,28 @@ export const MIN_PASSWORD = 6;
 
 // ---------------------------------------------------------------- Cuenta
 export const AuthApi = {
-  /** Paso 1 del registro: manda el SMS. */
-  startRegistration: (phone: string) =>
-    api<{ message: string }>('POST', '/auth/register/start', { phone }, { auth: false }),
+  /** Paso 1 del registro: manda el código por correo. */
+  startRegistration: (email: string) =>
+    api<{ message: string }>('POST', '/auth/register/start', { email }, { auth: false }),
 
-  /** Paso 2: código + datos -> crea la cuenta y deja la sesión iniciada. */
-  async completeRegistration(input: { phone: string; code: string; password: string; fullName: string; role: AppRole }) {
+  /** Paso 2: código + datos -> crea la cuenta y deja la sesión iniciada. El celular es opcional. */
+  async completeRegistration(input: { email: string; code: string; password: string; fullName: string; role: AppRole; phone?: string }) {
     const s = await api<ApiSession>('POST', '/auth/register/verify', input, { auth: false });
     saveSession(s);
     return s.user;
   },
 
-  async login(phone: string, password: string) {
-    const s = await api<ApiSession>('POST', '/auth/login', { phone, password }, { auth: false });
+  async login(email: string, password: string) {
+    const s = await api<ApiSession>('POST', '/auth/login', { email, password }, { auth: false });
     saveSession(s);
     return s.user;
   },
 
-  startPasswordReset: (phone: string) =>
-    api<{ message: string }>('POST', '/auth/password/forgot', { phone }, { auth: false }),
+  startPasswordReset: (email: string) =>
+    api<{ message: string }>('POST', '/auth/password/forgot', { email }, { auth: false }),
 
-  async completePasswordReset(phone: string, code: string, newPassword: string) {
-    const s = await api<ApiSession>('POST', '/auth/password/reset', { phone, code, newPassword }, { auth: false });
+  async completePasswordReset(email: string, code: string, newPassword: string) {
+    const s = await api<ApiSession>('POST', '/auth/password/reset', { email, code, newPassword }, { auth: false });
     saveSession(s);
     return s.user;
   },

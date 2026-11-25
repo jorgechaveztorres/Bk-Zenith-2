@@ -35,22 +35,23 @@ const handle = (fn: (req: Request) => Promise<unknown>) => async (req: Request, 
 
 // Registro (2 pasos)
 router.post('/register/start', handle(async (req) => {
-  await startRegistration(req.body?.phone);
-  return { message: 'Te enviamos un código por SMS.' };
+  await startRegistration(req.body?.email);
+  return { message: 'Te enviamos un código por correo.' };
 }));
 
 router.post('/register/verify', handle((req) => completeRegistration({
-  phone: req.body?.phone,
+  email: req.body?.email,
   code: req.body?.code,
   password: req.body?.password,
   fullName: req.body?.fullName,
   role: req.body?.role,
+  phone: req.body?.phone,
   deviceInfo: device(req),
 })));
 
-// Entrar con celular + clave
+// Entrar con correo + clave
 router.post('/login', handle((req) => login({
-  phone: req.body?.phone,
+  email: req.body?.email,
   password: req.body?.password,
   deviceInfo: device(req),
 })));
@@ -64,12 +65,12 @@ router.post('/logout', handle(async (req) => {
 
 // Olvidé mi clave (2 pasos)
 router.post('/password/forgot', handle(async (req) => {
-  await startPasswordReset(req.body?.phone);
-  return { message: 'Si el celular está registrado, te llegará un código por SMS.' };
+  await startPasswordReset(req.body?.email);
+  return { message: 'Si el correo está registrado, te llegará un código.' };
 }));
 
 router.post('/password/reset', handle((req) => completePasswordReset({
-  phone: req.body?.phone,
+  email: req.body?.email,
   code: req.body?.code,
   newPassword: req.body?.newPassword,
   deviceInfo: device(req),

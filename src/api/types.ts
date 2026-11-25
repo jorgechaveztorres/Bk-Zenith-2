@@ -8,7 +8,8 @@ export type AppRole = 'passenger' | 'driver';
 export interface ApiUser {
   id: string;
   fullName: string;
-  phone: string;
+  email: string;
+  phone: string | null;
   role: AppRole;
   isAdmin: boolean;
   kycStatus: string;

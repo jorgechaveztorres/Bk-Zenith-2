@@ -31,7 +31,7 @@ const waitUntil = async (fn: () => boolean, ms = 4000) => {
   return fn();
 };
 
-const PHONES = ['+51900000021', '+51900000022'];
+const EMAILS = ['cliente-test@zenith.local', 'moto-test@zenith.local'];
 const PLAZA = { lat: -8.1116, lng: -79.0288 };
 const DEST = { lat: -8.0950, lng: -79.0400 };
 
@@ -54,7 +54,7 @@ const main = async () => {
 
   const { createApp } = await import('../server/app');
   const { RealtimeHub, realtimePaths } = await import('../server/realtime/hub');
-  const { setSmsSender } = await import('../server/services/sms.service');
+  const { setEmailSender } = await import('../server/services/email.service');
   const { setRouteProvider, MockRouteProvider } = await import('../server/services/routes.service');
   const { getPool, closePool } = await import('../server/config/mysql');
   const { clearSettingsCache } = await import('../server/services/settings.service');
@@ -63,13 +63,13 @@ const main = async () => {
   const { Realtime } = await import('../src/api/realtime');
 
   const inbox = new Map<string, string>();
-  setSmsSender({ async send(phone: string, text: string) { const m = text.match(/(\d{6})/); if (m) inbox.set(phone, m[1]); } });
+  setEmailSender({ async send(to: string, _subject: string, text: string) { const m = text.match(/(\d{6})/); if (m) inbox.set(to, m[1]); } });
   setRouteProvider(new MockRouteProvider({ distanceKm: 3.2, durationMinutes: 9 }));
   clearSettingsCache();
 
   const cleanup = async () => {
     const pool = getPool();
-    const [u] = await pool.query<RowDataPacket[]>(`SELECT id FROM users WHERE phone IN (?, ?)`, PHONES);
+    const [u] = await pool.query<RowDataPacket[]>(`SELECT id FROM users WHERE email IN (?, ?)`, EMAILS);
     const ids = u.map((r) => String(r.id));
     if (ids.length) {
       const ph = ids.map(() => '?').join(',');
@@ -86,7 +86,7 @@ const main = async () => {
       }
       await pool.query(`DELETE FROM users WHERE id IN (${ph})`, ids);
     }
-    await pool.query(`DELETE FROM otp_codes WHERE phone IN (?, ?)`, PHONES);
+    await pool.query(`DELETE FROM otp_codes WHERE phone IN (?, ?)`, EMAILS);
   };
 
   await cleanup();
@@ -107,20 +107,20 @@ const main = async () => {
 
   try {
     console.log('\n1. Cuenta del cliente (módulos de la app)');
-    await AuthApi.startRegistration('900000021');
-    check('SMS de registro enviado', !!inbox.get(PHONES[0]));
-    const me = await AuthApi.completeRegistration({ phone: '900000021', code: inbox.get(PHONES[0]) || '', password: 'clave123', fullName: 'Cliente App', role: 'passenger' });
+    await AuthApi.startRegistration(EMAILS[0]);
+    check('correo de registro enviado', !!inbox.get(EMAILS[0]));
+    const me = await AuthApi.completeRegistration({ email: EMAILS[0], code: inbox.get(EMAILS[0]) || '', password: 'clave123', fullName: 'Cliente App', role: 'passenger' });
     check('registro deja sesión guardada', hasSession() && me.role === 'passenger' && store.size === 1);
 
     await AuthApi.logout();
     check('logout borra la sesión', !hasSession() && store.size === 0);
 
     let wrong = '';
-    try { await AuthApi.login('900000021', 'malaclave'); } catch (e) { wrong = e instanceof ApiError ? e.message : ''; }
-    check('clave errada da mensaje claro', wrong === 'Celular o clave incorrectos.', wrong);
+    try { await AuthApi.login(EMAILS[0], 'malaclave'); } catch (e) { wrong = e instanceof ApiError ? e.message : ''; }
+    check('clave errada da mensaje claro', wrong === 'Correo o clave incorrectos.', wrong);
 
-    await AuthApi.login('900000021', 'clave123');
-    check('login con celular + clave', getSessionUser()?.fullName === 'Cliente App');
+    await AuthApi.login(EMAILS[0], 'clave123');
+    check('login con correo + clave', getSessionUser()?.fullName === 'Cliente App');
 
     // Forzar token vencido: la app debe renovarlo sola.
     const oldRefresh = JSON.parse([...store.values()][0] || '{}').refreshToken;
@@ -142,8 +142,8 @@ const main = async () => {
     check('búsqueda corta rechazada', shortErr === 'Escribe al menos 3 letras.', shortErr);
 
     console.log('\n3. Motorizado listo');
-    await raw('POST', '/auth/register/start', undefined, { phone: PHONES[1] });
-    const dReg = await raw('POST', '/auth/register/verify', undefined, { phone: PHONES[1], code: inbox.get(PHONES[1]), password: 'clave123', fullName: 'Moto App', role: 'driver' });
+    await raw('POST', '/auth/register/start', undefined, { email: EMAILS[1] });
+    const dReg = await raw('POST', '/auth/register/verify', undefined, { email: EMAILS[1], code: inbox.get(EMAILS[1]), password: 'clave123', fullName: 'Moto App', role: 'driver' });
     const dToken = String(dReg.body.accessToken);
     const dId = String((dReg.body.user as { id: string }).id);
     await getPool().query(`UPDATE driver_profiles SET status = 'APPROVED' WHERE user_id = ?`, [dId]);
